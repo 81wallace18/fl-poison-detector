@@ -61,7 +61,7 @@ Combinação 2×2 = 4 datasets.
 .venv/bin/pip install -r requirements.txt
 
 # 2) Roda o grid completo (4 datasets × 2 detectores, ~30-40 min na RTX 5060 Ti)
-.venv/bin/python bench_grid.py
+.venv/bin/python src/bench_grid.py
 ```
 
 `bench_grid.py` faz tudo:

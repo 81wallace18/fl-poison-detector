@@ -242,11 +242,15 @@ def generate_variant(name: str, use_pretrained: bool, harden: bool,
 
 # ============== Runner: subprocess pros detectores ==============
 
+SRC_DIR = Path(__file__).resolve().parent  # src/, onde detector.py e detector_mlp.py vivem
+
+
 def run_detector(name: str, script: str, ds_dir: Path, output_dir: Path,
                  results_file: str) -> Dict:
     """Roda script via subprocess com env. Stream em tempo real (stdout +
     log file). Retorna metricas do JSON salvo."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    script_path = SRC_DIR / script
     env = os.environ.copy()
     env['STATE_DICTS_DIR'] = str(ds_dir)
     env['PYTHONUNBUFFERED'] = '1'  # forca prints imediatos no subprocess
@@ -263,7 +267,7 @@ def run_detector(name: str, script: str, ds_dir: Path, output_dir: Path,
     t0 = time.time()
     with open(log_file, 'w') as logf:
         proc = subprocess.Popen(
-            [sys.executable, '-u', script], env=env,
+            [sys.executable, '-u', str(script_path)], env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,
         )

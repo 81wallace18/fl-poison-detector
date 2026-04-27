@@ -25,24 +25,29 @@ Detalhes do experimento, números completos por ataque, e narrativa metodológic
 
 ```bash
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python bench_grid.py
+.venv/bin/python src/bench_grid.py
 ```
 
 `bench_grid.py` faz tudo: treina baseline em MNIST, gera 4 variantes do dataset, roda os 2 detectores em cada uma, imprime tabela final + breakdown por ataque, salva tudo em `bench_grid_results.json`. ~30–40 min na RTX 5060 Ti.
 
+Sempre executar a partir da **raiz do projeto** — paths como `state_dicts/`, `mnist_data/` etc. são relativos ao cwd.
+
 ## Estrutura
 
-| Arquivo | Propósito |
-|---|---|
-| `detector.py` | Detector via DistilBERT+LoRA sobre pesos→bins |
-| `detector_mlp.py` | Detector via MLP sobre features handcrafted |
-| `features.py` | Extrator de 60 features por amostra (15 × 4 camadas) |
-| `bench_grid.py` | Orquestrador 4×2 (variantes × detectores) |
-| `BertModelsclassify.ipynb` | Notebook ad-hoc com flags de geração de dataset |
-| `requirements.txt` | Deps Python |
-| `bench_grid_results.json` | Resultados serializados do último run |
+```
+.
+├── README.md, RESULTS.md, EVOLUTION.md   # docs
+├── requirements.txt, .gitignore
+├── BertModelsclassify.ipynb              # notebook ad-hoc com flags de geração
+├── bench_grid_results.json               # resultados serializados do último run
+└── src/
+    ├── detector.py                       # DistilBERT+LoRA sobre pesos→bins
+    ├── detector_mlp.py                   # MLP sobre features handcrafted
+    ├── features.py                       # extrator de 60 features
+    └── bench_grid.py                     # orquestrador 4×2
+```
 
-Saídas geradas em runtime (todas no `.gitignore`):
+Saídas geradas em runtime (todas no `.gitignore`, raiz do projeto):
 
 | Diretório | Conteúdo |
 |---|---|
@@ -127,13 +132,13 @@ Notebook de exploração + geração ad-hoc de dataset:
 Exemplo — rodar grid rápido só com MLP:
 
 ```bash
-GRID_N_SAMPLES_PER_CLASS=200 GRID_SKIP_DISTILBERT=1 .venv/bin/python bench_grid.py
+GRID_N_SAMPLES_PER_CLASS=200 GRID_SKIP_DISTILBERT=1 .venv/bin/python src/bench_grid.py
 ```
 
 Exemplo — rodar `detector.py` standalone num dataset custom:
 
 ```bash
-STATE_DICTS_DIR=meus_dados FINAL_MODEL_DIR=./meu_modelo .venv/bin/python detector.py
+STATE_DICTS_DIR=meus_dados FINAL_MODEL_DIR=./meu_modelo .venv/bin/python src/detector.py
 ```
 
 ## Reprodutibilidade
