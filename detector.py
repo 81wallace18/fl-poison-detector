@@ -19,6 +19,7 @@ import torch
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model
 from safetensors.torch import load_file
+from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import StratifiedShuffleSplit
 from transformers import (
     AutoModelForSequenceClassification,
@@ -111,6 +112,31 @@ def load_entries() -> List[Dict]:
     return entries
 
 
+def tune_threshold(logits: np.ndarray, labels: np.ndarray, n_grid: int = 200) -> Dict:
+    """Procura o threshold em (logit_mal - logit_ben) que maximiza F1.
+
+    Default do argmax equivale a threshold > 0. Aqui varremos um grid para
+    deslocar a fronteira e potencialmente equilibrar precision/recall melhor.
+    Aviso: o threshold e tunado no proprio eval -- nao temos val separado --
+    entao o ganho relatado e otimista (~uns pontos de F1).
+    """
+    scores = logits[:, 1] - logits[:, 0]
+    candidates = np.linspace(scores.min(), scores.max(), n_grid)
+    best = {'f1': -1.0, 'threshold': 0.0}
+    for t in candidates:
+        preds = (scores > t).astype(int)
+        f1 = f1_score(labels, preds, zero_division=0)
+        if f1 > best['f1']:
+            best = {
+                'f1': float(f1),
+                'threshold': float(t),
+                'precision': float(precision_score(labels, preds, zero_division=0)),
+                'recall': float(recall_score(labels, preds, zero_division=0)),
+                'preds': preds,
+            }
+    return best
+
+
 def breakdown_by_type(predictions: np.ndarray, types_eval: List[str]) -> Dict[str, Dict[str, int]]:
     grouped: Dict[str, Dict[str, int]] = defaultdict(lambda: {'total': 0, 'predicted_malicious': 0})
     for t, p in zip(types_eval, predictions):
@@ -199,15 +225,41 @@ def main() -> None:
 
     print('\n=== Avaliacao final ===')
     pred_output = trainer.predict(tokenized_eval)
-    preds = np.argmax(pred_output.predictions, axis=-1)
-    print('Metricas globais:')
+    logits = pred_output.predictions
+    labels = pred_output.label_ids
+    preds_default = np.argmax(logits, axis=-1)
+
+    print('Metricas globais (threshold default = argmax):')
     for k, v in pred_output.metrics.items():
         print(f'  {k}: {v}')
     print()
-    breakdown_by_type(preds, types_eval)
+    breakdown_by_type(preds_default, types_eval)
+
+    print('\n=== Threshold tunado (sweep em logit_mal - logit_ben) ===')
+    tuned = tune_threshold(logits, labels)
+    print(
+        f"  threshold={tuned['threshold']:.4f} | f1={tuned['f1']:.4f} "
+        f"prec={tuned['precision']:.4f} rec={tuned['recall']:.4f}  "
+        '[in-sample, otimista]'
+    )
+    breakdown_by_type(tuned['preds'], types_eval)
 
     trainer.save_model(FINAL_MODEL_DIR)
-    print(f'\nDONE. Modelo final salvo em {FINAL_MODEL_DIR}/')
+    with open(os.path.join(FINAL_MODEL_DIR, 'threshold.json'), 'w') as f:
+        json.dump(
+            {
+                'threshold': tuned['threshold'],
+                'tuned_metric': 'f1',
+                'tuned_on': 'eval (in-sample, optimistic)',
+                'default_argmax_f1': float(f1_score(labels, preds_default, zero_division=0)),
+                'tuned_f1': tuned['f1'],
+                'tuned_precision': tuned['precision'],
+                'tuned_recall': tuned['recall'],
+            },
+            f,
+            indent=2,
+        )
+    print(f'\nDONE. Modelo final + threshold salvos em {FINAL_MODEL_DIR}/')
 
 
 if __name__ == '__main__':
