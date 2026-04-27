@@ -99,3 +99,4 @@ requirements.txt       deps (torch, torchvision, transformers, peft, scipy, skle
 ## Conclusão
 
 Para detectar updates maliciosos em FL com benigno definido como "modelo global treinado + ruído de 1 step local", **features estatísticas/espectrais/espaciais combinadas com um MLP simples são suficientes**: F1 0.96–1.0 nas 4 variantes testadas, com 0–1% de FPR. Transformer sobre tokens-de-bins é dead-end estrutural pra esse problema (~0.88 plateau).
+
