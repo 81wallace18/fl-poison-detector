@@ -1,102 +1,151 @@
-# Detector de updates maliciosos em FL
+# fl-poison-detector
 
-Estudo comparativo de duas abordagens para detectar **state_dicts maliciosos** enviados por clientes em Federated Learning. Cliente FL é uma `FedAvgCNN` (~580k pesos); detector classifica binariamente um update vindo de cliente como `benigno` ou `malicioso` antes da agregação.
+Detector binário de **updates maliciosos** em Federated Learning. Recebe um `state_dict` de cliente FL (uma `FedAvgCNN` com ~580k pesos) e classifica como **benigno** ou **malicioso** antes da agregação.
+
+Duas abordagens implementadas e comparadas:
+- **`detector.py`** — DistilBERT + LoRA sobre os pesos discretizados em bins
+- **`detector_mlp.py`** — MLP simples sobre 60 features estatísticas/espectrais/espaciais extraídas dos pesos
 
 ## TL;DR
 
-**MLP sobre 60 features estatísticas/espectrais/espaciais bate DistilBERT+LoRA sobre tokens-de-bins em todas as variantes do dataset, por margem de 0.10 a 0.15 de F1.** No cenário mais realista (modelo treinado em MNIST + ataques sutis), o MLP atinge F1=0.99 com 0% de FPR; o DistilBERT plateia em 0.88.
-
-| Variante (`pretrained` × `hard`) | DistilBERT F1 (tunado) | MLP F1 |
+| Variante (`pretrained` × `hard`) | DistilBERT F1 | MLP F1 |
 |---|---|---|
-| 1. Leakage (random init + ataques originais) | 0.884 | **1.000** |
-| 2. Hard (random init + ataques sutis) | 0.895 | **0.964** |
-| 3. **Pretrained + Hard** (mais realista) | 0.881 | **0.990** |
-| 4. Pretrained + Easy | 0.859 | **1.000** |
+| 1. Leakage | 0.88 | **1.00** |
+| 2. Hard | 0.89 | **0.96** |
+| 3. **Pretrained + Hard** (mais realista) | 0.88 | **0.99** |
+| 4. Pretrained + Easy | 0.86 | **1.00** |
 
-## Os dois detectores
+MLP+features ganha por 0.10–0.15 F1 em todos os cenários.
 
-### `detector.py` — DistilBERT+LoRA sobre tokens-de-bins
-Trata os pesos como uma sequência: normaliza por camada, discretiza em 10000 bins, faz pooling estratificado pra caber em 512 tokens. Cada bin vira um "input_id" do DistilBERT. LoRA `r=8` em `q_lin`/`v_lin`. Threshold tunado pós-treino.
+Detalhes do experimento, números completos por ataque, e narrativa metodológica:
+- [`RESULTS.md`](RESULTS.md) — relatório dos achados
+- [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu
 
-Limitação estrutural: bins são tokens não-ordinais — bin 100 e bin 101 ficam com embeddings independentes. Perde-se a noção de proximidade entre valores de pesos.
-
-### `detector_mlp.py` — MLP sobre 60 features
-Calcula 15 features por camada × 4 camadas com `weight` no nome:
-
-- **Estatísticas**: l2, linf, mean, std, kurt, zero_ratio, p5, p95, hist_entropy
-- **Espectrais**: top-3 singular values normalizados por Frobenius, FFT high/low ratio
-- **Espaciais**: total variation, autocorrelação Pearson lag-1
-
-Vetor de 60 floats → `BatchNorm → 60→128 → ReLU → Dropout → 128→64 → ReLU → Dropout → 64→2`. ~13k params. Treina em ~5s com early stopping.
-
-Features explícitas dão sinal pronto pro MLP — não precisa "redescobrir" estrutura.
-
-## Os 4 datasets do grid
-
-Controlados por dois flags no notebook (`BertModelsclassify.ipynb` cell 3):
-
-| flag | True | False |
-|---|---|---|
-| `USE_PRETRAINED_BASE` | FedAvgCNN treinado em MNIST por 10 epochs (test_acc ~0.99) | Random init |
-| `HARDEN_ATTACKS` | Cada malicioso parte de fresh_base + ruído. Ataques: `random_smart` (Gaussiano com sigma da camada), `shuffle parcial 30-100%`, `noise` SNR uniforme [3, 15] dB | Base compartilhado entre maliciosos. Ataques fixos: U[0,1], shuffle 100%, SNR=5 dB |
-
-Combinação 2×2 = 4 datasets.
-
-## Achados-chave
-
-1. **MLP > DistilBERT em todos os cenários** (gap 0.10-0.15 F1). Features explícitas batem tokenização para esse problema numérico.
-
-2. **DistilBERT plateia em 0.88** independentemente do dataset. Tipo dos ataques, leakage, pretreino — nada disso muda muito. É teto estrutural do paradigma de bins-como-tokens.
-
-3. **Shuffle em random init é detectável** com dados suficientes. Em rodada com 200 amostras tinha recall=0% (parecia indistinguível); com 1000 amostras pula pra 80%. A flutuação estatística entre matrizes random shuffleadas e benignas é pequena mas não-zero — vira sinal aproveitável com escala.
-
-4. **Pretreino traz +0.03 marginais** quando há dados (1000 amostras). Crítico em regime de dados escassos, pequeno em regime amplo.
-
-5. **Limite informacional real**: noise com SNR alto (>10 dB) contra background estruturado. F1 não passa de ~92% pra essa categoria — ruído indistinguível por construção.
-
-## Reproduzir
+## Quick start
 
 ```bash
-# 1) Setup
 .venv/bin/pip install -r requirements.txt
-
-# 2) Roda o grid completo (4 datasets × 2 detectores, ~30-40 min na RTX 5060 Ti)
 .venv/bin/python bench_grid.py
 ```
 
-`bench_grid.py` faz tudo:
-- Treina FedAvgCNN em MNIST 1× (cache em `mnist_data/`)
-- Gera 4 datasets em `state_dicts_grid/{1_leakage,2_hard,3_pretrained_hard,4_pretrained_easy}/`
-- Roda `detector.py` (DistilBERT) e `detector_mlp.py` (MLP) em cada
-- Imprime tabela final + breakdown por ataque
-- Salva tudo em `bench_grid_results.json`
-
-Logs por run em `detector_grid_runs/{variante}/{distilbert,mlp}/log.txt`.
-
-### Variáveis de ambiente úteis
-
-- `GRID_N_SAMPLES_PER_CLASS=200` — iteração rápida (default 1000)
-- `GRID_SKIP_DISTILBERT=1` — só MLP (~3 min total)
-- `STATE_DICTS_DIR=...`, `FINAL_MODEL_DIR=...`, `ARTIFACTS_DIR=...` — pra rodar `detector.py`/`detector_mlp.py` standalone em diretório custom
+`bench_grid.py` faz tudo: treina baseline em MNIST, gera 4 variantes do dataset, roda os 2 detectores em cada uma, imprime tabela final + breakdown por ataque, salva tudo em `bench_grid_results.json`. ~30–40 min na RTX 5060 Ti.
 
 ## Estrutura
 
+| Arquivo | Propósito |
+|---|---|
+| `detector.py` | Detector via DistilBERT+LoRA sobre pesos→bins |
+| `detector_mlp.py` | Detector via MLP sobre features handcrafted |
+| `features.py` | Extrator de 60 features por amostra (15 × 4 camadas) |
+| `bench_grid.py` | Orquestrador 4×2 (variantes × detectores) |
+| `BertModelsclassify.ipynb` | Notebook ad-hoc com flags de geração de dataset |
+| `requirements.txt` | Deps Python |
+| `bench_grid_results.json` | Resultados serializados do último run |
+
+Saídas geradas em runtime (todas no `.gitignore`):
+
+| Diretório | Conteúdo |
+|---|---|
+| `state_dicts/` ou `state_dicts_grid/{variante}/` | `.safetensors` + `.json` por amostra |
+| `detector_final/` | Modelo DistilBERT+LoRA treinado + `metrics.json` |
+| `detector_mlp_artifacts/` | MLP + scaler + `feature_names.json` + `report.json` |
+| `detector_grid_runs/{variante}/{detector}/` | Logs e artefatos por run do grid |
+| `mnist_data/` | Cache do MNIST (baixado pelo `bench_grid`) |
+
+## Documentação por arquivo
+
+### `detector.py`
+
+Pipeline DistilBERT+LoRA:
+
+1. `preprocess_weights(state_dict)` — pega todos os tensores com `'weight'` no nome, normaliza cada um por quantis (q5/q95) com clamp em [0, 1], concatena, faz **pooling estratificado** via `torch.linspace(0, n-1, 512)` (em vez de truncamento), discretiza em 10000 bins (PAD_ID=0 reservado).
+2. `tokenize_function` monta `input_ids` + `attention_mask` (1 para tokens não-PAD).
+3. `build_and_train(seed)` — DistilBERT base + LoRA `r=8` em `q_lin`/`v_lin`. Treino: 15 epochs, lr=2e-4, weight_decay=0.01, scheduler cosine, warmup 6%, batch=16. Early stopping `patience=7` em F1.
+4. `tune_threshold(logits, labels)` — sweep de 200 thresholds em `(logit_mal − logit_ben)`, escolhe o que maximiza F1. Tunado in-sample no eval — métrica é otimista mas marginal.
+5. `breakdown_by_type` — recall por tipo de ataque (`zeros`, `random`, `shuffle`, `noise`).
+
+`MODEL_SEED=15880` foi escolhido em experimento de ensemble como o que dá melhor F1 individual. Persistência em `FINAL_MODEL_DIR` + `metrics.json`.
+
+### `detector_mlp.py`
+
+Pipeline MLP:
+
+1. `load_dataset()` — itera `state_dicts/*.safetensors` + `.json`, chama `extract_features`. Resultado: matriz X (N×60) + labels y + types.
+2. `stratified_split(types, ...)` — `StratifiedShuffleSplit` por **tipo** de ataque (não só label) — garante que cada split tem amostras de cada categoria.
+3. `StandardScaler` ajustado só no treino, persistido em `scaler.pkl`.
+4. `MLPDetector` — `BatchNorm1d(60) → Linear(60→128) → ReLU → Dropout(0.3) → Linear(128→64) → ReLU → Dropout(0.3) → Linear(64→2)`. ~13k parâmetros.
+5. Treino: AdamW lr=1e-3 wd=1e-4, scheduler `CosineAnnealingLR` por 60 epochs, batch=32, early stopping `patience=15` em F1 do eval, restaura best checkpoint.
+6. Avaliação final + `breakdown_by_type` + `report.json` + `feature_names.json` em `ARTIFACTS_DIR`.
+
+### `features.py`
+
+Extrator puro (não tem treino). 4 camadas processadas: `conv1.0.weight`, `conv2.0.weight`, `fc1.0.weight`, `fc.weight`. Conv kernels viram matriz `(out, in·kH·kW)` para SVD/FFT 2D coerentes.
+
+15 features por camada (× 4 camadas = 60):
+
+| Categoria | Feature | O que mede |
+|---|---|---|
+| Magnitude | `l2`, `linf` | Norma Frobenius e máximo absoluto |
+| Distribuição | `mean`, `std`, `kurt`, `zero_ratio`, `p5`, `p95` | Momentos e percentis |
+| Entropia | `hist_entropy` | Entropia do histograma de 50 bins |
+| Espectral | `sv1`, `sv2`, `sv3` | Top-3 singular values normalizados por Frobenius |
+| Frequencial | `fft_hf_ratio` | Razão energia high-freq / low-freq via FFT-2D |
+| Espacial | `tv` | Total variation média entre pesos vizinhos |
+| Espacial | `autocorr1` | Autocorrelação Pearson lag-1 |
+
+Roda na GPU se disponível (`torch.linalg.svdvals`, `torch.fft.fft2`). Custo ~ms por amostra.
+
+### `bench_grid.py`
+
+Orquestrador único que faz benchmark completo. Etapas:
+
+1. Treina **`pretrained_base`** = `FedAvgCNN` em MNIST (10 epochs, ~1–2 min, cache em `mnist_data/`).
+2. Gera 4 datasets em `state_dicts_grid/{1_leakage, 2_hard, 3_pretrained_hard, 4_pretrained_easy}/` (cada um N amostras de cada classe).
+3. Roda `detector.py` e `detector_mlp.py` via subprocess para cada variante (8 treinos sequenciais), com env vars apontando pros dirs corretos. Streaming dos logs em tempo real, prefixados com `[variante DB|MLP]`.
+4. Lê `metrics.json` / `report.json` de cada run, monta tabela final + breakdown por ataque, salva em `bench_grid_results.json`.
+
+### `BertModelsclassify.ipynb`
+
+Notebook de exploração + geração ad-hoc de dataset:
+- **Cell 1**: definições (`FedAvgCNN`, ataques, helpers).
+- **Cell 3**: **CONFIG + setup do `pretrained_base`** — flags `USE_PRETRAINED_BASE` (treina em MNIST se True), `HARDEN_ATTACKS` (ataques sutis se True), `N_SAMPLES_PER_CLASS`. Treina baseline conforme flag.
+- **Cell 5**: gerador de `state_dicts/`, branching condicional pelo `HARDEN_ATTACKS`.
+
+Útil pra gerar **um dataset específico** sem rodar o grid completo. Os flags do notebook reproduzem qualquer das 4 variantes do `bench_grid.py`.
+
+## Configuração via env vars
+
+| Variável | Usado por | Default | Descrição |
+|---|---|---|---|
+| `STATE_DICTS_DIR` | `detector.py`, `detector_mlp.py` | `state_dicts` | Pasta de leitura dos `.safetensors` |
+| `FINAL_MODEL_DIR` | `detector.py` | `./detector_final` | Pasta de saída do modelo DistilBERT |
+| `RUN_DIR` | `detector.py` | `./detector_runs/best` | `output_dir` do `Trainer` HF |
+| `ARTIFACTS_DIR` | `detector_mlp.py` | `detector_mlp_artifacts` | Pasta de saída do MLP |
+| `GRID_N_SAMPLES_PER_CLASS` | `bench_grid.py` | `1000` | Tamanho de cada variante do grid |
+| `GRID_SKIP_DISTILBERT` | `bench_grid.py` | `0` | `1` pula DistilBERT (~3 min total só MLP) |
+
+Exemplo — rodar grid rápido só com MLP:
+
+```bash
+GRID_N_SAMPLES_PER_CLASS=200 GRID_SKIP_DISTILBERT=1 .venv/bin/python bench_grid.py
 ```
-detector.py            DistilBERT+LoRA sobre tokens-de-bins
-detector_mlp.py        MLP sobre features
-features.py            extract_features(state_dict) -> (np.ndarray[60], names)
-bench_grid.py          orquestrador do grid 4×2
-BertModelsclassify.ipynb  notebook de exploração + geração de datasets ad-hoc
-requirements.txt       deps (torch, torchvision, transformers, peft, scipy, sklearn, ...)
+
+Exemplo — rodar `detector.py` standalone num dataset custom:
+
+```bash
+STATE_DICTS_DIR=meus_dados FINAL_MODEL_DIR=./meu_modelo .venv/bin/python detector.py
 ```
+
+## Reprodutibilidade
+
+- Seeds fixas: `SEED=42` (data split) e `MODEL_SEED=15880` (treino do DistilBERT)
+- `torch.backends.cudnn.deterministic=True` no MLP
+- `bench_grid.py` é determinístico exceto pela parte de download do MNIST (a primeira vez)
+- Resultado esperado bate com `bench_grid_results.json` ±0.01 F1
 
 ## Limitações conhecidas
 
-- **FedAvgCNN apenas**: features assumem 4 camadas com `weight` no nome (`conv1.0.weight`, `conv2.0.weight`, `fc1.0.weight`, `fc.weight`). Para outras arquiteturas precisa adaptar `LAYERS` em `features.py`.
-- **Detecção isolada por update**: não considera comparação entre clientes (Krum/Multi-Krum) nem trajetória multi-round (FLDetector). Defesa complementar, não substituta.
-- **Threshold tunado in-sample** no `detector.py` — métricas tunadas otimistas (não temos val separado).
-
-## Conclusão
-
-Para detectar updates maliciosos em FL com benigno definido como "modelo global treinado + ruído de 1 step local", **features estatísticas/espectrais/espaciais combinadas com um MLP simples são suficientes**: F1 0.96–1.0 nas 4 variantes testadas, com 0–1% de FPR. Transformer sobre tokens-de-bins é dead-end estrutural pra esse problema (~0.88 plateau).
-
+- **Apenas FedAvgCNN**: `features.py` e `detector.py` assumem 4 camadas com `weight` no nome (`conv1.0.weight`, `conv2.0.weight`, `fc1.0.weight`, `fc.weight`). Para outras arquiteturas, ajustar `LAYERS` em `features.py`.
+- **Detecção isolada por update**: não usa comparação entre clientes (Krum/Multi-Krum/FoolsGold) nem trajetória multi-round (FLDetector). Defesa complementar, não substituta.
+- **Threshold tunado in-sample**: `detector.py:tune_threshold` usa o eval set também pra escolher o threshold. Métrica tunada é otimista.
+- **noise SNR alto é ceiling real**: contra benign treinado, ruído com SNR > 10 dB é ~indistinguível por construção.
