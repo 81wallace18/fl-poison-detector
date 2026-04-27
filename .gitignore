@@ -46,6 +46,8 @@ detector_model/
 detector_model_merged/
 detector_model_quantized_8bit/
 detector_mlp_artifacts/
+detector_grid_runs/
+state_dicts_grid/
 checkpoints/
 runs/
 wandb/

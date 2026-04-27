@@ -36,8 +36,8 @@ from torch.utils.data import DataLoader, TensorDataset
 from features import N_FEATURES, extract_features, feature_names
 
 SEED = 42
-STATE_DICTS_DIR = 'state_dicts'
-ARTIFACTS_DIR = Path('detector_mlp_artifacts')
+STATE_DICTS_DIR = os.environ.get('STATE_DICTS_DIR', 'state_dicts')
+ARTIFACTS_DIR = Path(os.environ.get('ARTIFACTS_DIR', 'detector_mlp_artifacts'))
 HIDDEN = (128, 64)
 DROPOUT = 0.3
 LR = 1e-3

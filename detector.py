@@ -37,9 +37,10 @@ SEED = 42
 # experimento de ensemble com 5 seeds. Mantida separada de SEED (que controla
 # o split estratificado) para nao alterar a particao train/eval.
 MODEL_SEED = 15880
-STATE_DICTS_DIR = 'state_dicts'
+STATE_DICTS_DIR = os.environ.get('STATE_DICTS_DIR', 'state_dicts')
 TEST_SIZE = 0.2
-FINAL_MODEL_DIR = './detector_final'
+FINAL_MODEL_DIR = os.environ.get('FINAL_MODEL_DIR', './detector_final')
+RUN_DIR = os.environ.get('RUN_DIR', './detector_runs/best')
 MODEL_NAME = 'distilbert-base-uncased'
 
 # Carregadas em main(); compute_metrics referencia para casar com a assinatura
@@ -235,7 +236,7 @@ def main() -> None:
     os.makedirs(FINAL_MODEL_DIR, exist_ok=True)
     print(f'\n========== Treinando modelo (seed={MODEL_SEED}) ==========')
     trainer, pred_output = build_and_train(
-        MODEL_SEED, tokenized_train, tokenized_eval, './detector_runs/best'
+        MODEL_SEED, tokenized_train, tokenized_eval, RUN_DIR
     )
 
     logits = pred_output.predictions
