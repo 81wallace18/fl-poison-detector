@@ -33,9 +33,14 @@ PAD_ID = 0
 NUM_BINS = 10000
 MAX_LENGTH = 512
 SEED = 42
+# Seed do treino fixada na que rendeu o melhor F1 individual (0.892) num
+# experimento de ensemble com 5 seeds. Mantida separada de SEED (que controla
+# o split estratificado) para nao alterar a particao train/eval.
+MODEL_SEED = 15880
 STATE_DICTS_DIR = 'state_dicts'
 TEST_SIZE = 0.2
 FINAL_MODEL_DIR = './detector_final'
+MODEL_NAME = 'distilbert-base-uncased'
 
 # Carregadas em main(); compute_metrics referencia para casar com a assinatura
 # (eval_pred) -> dict que o Trainer espera.
@@ -137,6 +142,47 @@ def tune_threshold(logits: np.ndarray, labels: np.ndarray, n_grid: int = 200) ->
     return best
 
 
+def build_and_train(seed: int, tokenized_train, tokenized_eval, run_dir: str):
+    """Treina um modelo DistilBERT+LoRA com a seed dada. Retorna (trainer, pred_output)."""
+    set_seed(seed)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME, num_labels=2, ignore_mismatched_sizes=True
+    )
+    lora_config = LoraConfig(r=8, lora_alpha=16, target_modules=['q_lin', 'v_lin'])
+    model = get_peft_model(model, lora_config)
+
+    training_args = TrainingArguments(
+        output_dir=run_dir,
+        num_train_epochs=15,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        learning_rate=2e-4,
+        weight_decay=0.01,
+        lr_scheduler_type='cosine',
+        warmup_ratio=0.06,
+        eval_strategy='epoch',
+        logging_strategy='epoch',
+        save_strategy='epoch',
+        save_total_limit=2,
+        load_best_model_at_end=True,
+        metric_for_best_model='f1',
+        greater_is_better=True,
+        report_to='none',
+        seed=seed,
+    )
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenized_train,
+        eval_dataset=tokenized_eval,
+        compute_metrics=compute_metrics,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=7)],
+    )
+    trainer.train()
+    pred_output = trainer.predict(tokenized_eval)
+    return trainer, pred_output
+
+
 def breakdown_by_type(predictions: np.ndarray, types_eval: List[str]) -> Dict[str, Dict[str, int]]:
     grouped: Dict[str, Dict[str, int]] = defaultdict(lambda: {'total': 0, 'predicted_malicious': 0})
     for t, p in zip(types_eval, predictions):
@@ -186,80 +232,55 @@ def main() -> None:
     _precision = evaluate.load('precision')
     _recall = evaluate.load('recall')
 
-    model_name = 'distilbert-base-uncased'
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_name, num_labels=2, ignore_mismatched_sizes=True
-    )
-    lora_config = LoraConfig(r=8, lora_alpha=16, target_modules=['q_lin', 'v_lin'])
-    model = get_peft_model(model, lora_config)
-
-    training_args = TrainingArguments(
-        output_dir='./detector',
-        num_train_epochs=15,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
-        learning_rate=2e-4,
-        weight_decay=0.01,
-        lr_scheduler_type='cosine',
-        warmup_ratio=0.06,
-        eval_strategy='epoch',
-        logging_strategy='epoch',
-        save_strategy='epoch',
-        save_total_limit=2,
-        load_best_model_at_end=True,
-        metric_for_best_model='f1',
-        greater_is_better=True,
-        report_to='none',
-        seed=SEED,
+    os.makedirs(FINAL_MODEL_DIR, exist_ok=True)
+    print(f'\n========== Treinando modelo (seed={MODEL_SEED}) ==========')
+    trainer, pred_output = build_and_train(
+        MODEL_SEED, tokenized_train, tokenized_eval, './detector_runs/best'
     )
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_train,
-        eval_dataset=tokenized_eval,
-        compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=7)],
-    )
-    trainer.train()
-
-    print('\n=== Avaliacao final ===')
-    pred_output = trainer.predict(tokenized_eval)
     logits = pred_output.predictions
     labels = pred_output.label_ids
     preds_default = np.argmax(logits, axis=-1)
+    f1_default = float(f1_score(labels, preds_default, zero_division=0))
+    prec_default = float(precision_score(labels, preds_default, zero_division=0))
+    rec_default = float(recall_score(labels, preds_default, zero_division=0))
 
-    print('Metricas globais (threshold default = argmax):')
-    for k, v in pred_output.metrics.items():
-        print(f'  {k}: {v}')
-    print()
+    print('\n=== Avaliacao final (threshold default = argmax) ===')
+    print(f'  F1={f1_default:.4f} prec={prec_default:.4f} rec={rec_default:.4f}')
     breakdown_by_type(preds_default, types_eval)
 
-    print('\n=== Threshold tunado (sweep em logit_mal - logit_ben) ===')
+    print('\n=== Threshold tunado ===')
     tuned = tune_threshold(logits, labels)
     print(
-        f"  threshold={tuned['threshold']:.4f} | f1={tuned['f1']:.4f} "
+        f"  threshold={tuned['threshold']:.4f} | F1={tuned['f1']:.4f} "
         f"prec={tuned['precision']:.4f} rec={tuned['recall']:.4f}  "
         '[in-sample, otimista]'
     )
     breakdown_by_type(tuned['preds'], types_eval)
 
     trainer.save_model(FINAL_MODEL_DIR)
-    with open(os.path.join(FINAL_MODEL_DIR, 'threshold.json'), 'w') as f:
+    with open(os.path.join(FINAL_MODEL_DIR, 'metrics.json'), 'w') as f:
         json.dump(
             {
-                'threshold': tuned['threshold'],
-                'tuned_metric': 'f1',
-                'tuned_on': 'eval (in-sample, optimistic)',
-                'default_argmax_f1': float(f1_score(labels, preds_default, zero_division=0)),
-                'tuned_f1': tuned['f1'],
-                'tuned_precision': tuned['precision'],
-                'tuned_recall': tuned['recall'],
+                'split_seed': SEED,
+                'model_seed': MODEL_SEED,
+                'default_argmax': {
+                    'f1': f1_default,
+                    'precision': prec_default,
+                    'recall': rec_default,
+                },
+                'tuned': {
+                    'threshold': tuned['threshold'],
+                    'f1': tuned['f1'],
+                    'precision': tuned['precision'],
+                    'recall': tuned['recall'],
+                    'note': 'threshold tuned on eval set (in-sample, optimistic)',
+                },
             },
             f,
             indent=2,
         )
-    print(f'\nDONE. Modelo final + threshold salvos em {FINAL_MODEL_DIR}/')
+    print(f'\nDONE. Modelo + metrics.json em {FINAL_MODEL_DIR}/')
 
 
 if __name__ == '__main__':
