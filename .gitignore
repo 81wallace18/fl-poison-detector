@@ -22,6 +22,7 @@ ENV/
 # IDE / editor
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 .DS_Store
@@ -44,6 +45,7 @@ detector/
 detector_model/
 detector_model_merged/
 detector_model_quantized_8bit/
+detector_mlp_artifacts/
 checkpoints/
 runs/
 wandb/

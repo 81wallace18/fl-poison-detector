@@ -8,6 +8,8 @@ accelerate
 bitsandbytes
 numpy
 pandas
+scipy
 scikit-learn
+joblib
 ipykernel
 jupyter
