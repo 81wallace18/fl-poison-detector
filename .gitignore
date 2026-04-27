@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+build/
+dist/
+
+# Virtualenv
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Hugging Face / cache
+.cache/
+.huggingface/
+
+# Pesos e datasets gerados (grandes, reprodutiveis)
+state_dicts/
+state_dicts.csv
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+
+# Saidas de treino
+detector/
+detector_model/
+detector_model_merged/
+detector_model_quantized_8bit/
+checkpoints/
+runs/
+wandb/
+mlruns/
+
+# Logs
+*.log
