@@ -51,5 +51,8 @@ runs/
 wandb/
 mlruns/
 
+# MNIST cache (baixado pelo treino do pretrained_base)
+mnist_data/
+
 # Logs
 *.log

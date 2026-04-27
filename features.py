@@ -1,7 +1,7 @@
 """Feature extractor para detectar updates maliciosos em FL.
 
-Extrai 13 features estatisticas/espectrais por camada (4 camadas com 'weight'
-na FedAvgCNN) -> vetor de 52 features. Computa SVD e FFT na GPU quando disponivel.
+Extrai 15 features estatisticas/espectrais/espaciais por camada (4 camadas com
+'weight' na FedAvgCNN) -> vetor de 60 features. Computa SVD e FFT na GPU.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ PREFIX: List[str] = ['conv1', 'conv2', 'fc1', 'fc']
 FEATS: List[str] = [
     'l2', 'linf', 'mean', 'std', 'kurt', 'zero_ratio',
     'p5', 'p95', 'hist_entropy', 'sv1', 'sv2', 'sv3', 'fft_hf_ratio',
+    'tv', 'autocorr1',
 ]
 N_FEATURES_PER_LAYER = len(FEATS)
 N_FEATURES = N_FEATURES_PER_LAYER * len(LAYERS)
@@ -34,6 +35,35 @@ def _kurtosis(x: torch.Tensor) -> torch.Tensor:
         return torch.tensor(0.0, device=x.device)
     m4 = (diff ** 4).mean()
     return m4 / (var ** 2) - 3.0
+
+
+def _autocorr1(x: torch.Tensor) -> torch.Tensor:
+    """Autocorrelacao Pearson lag-1 sobre o flatten.
+
+    Pesos com estrutura espacial (treinados, ou com fan-in init estruturada)
+    tendem a ter autocorr ~0.3-0.7 entre posicoes vizinhas. Shuffle quebra
+    isso -> autocorr ~ 0.
+    """
+    if x.numel() < 2:
+        return torch.tensor(0.0, device=x.device)
+    m = x.mean()
+    d = x - m
+    num = (d[1:] * d[:-1]).sum()
+    den = (d ** 2).sum().clamp_min(1e-12)
+    return num / den
+
+
+def _total_variation(M: torch.Tensor) -> torch.Tensor:
+    """Total variation media: media de |M[i+1] - M[i]| sobre as duas dimensoes.
+
+    Pesos suaves (treinados, ou com correlacao espacial em conv kernels)
+    tem TV baixa; shuffle aumenta porque pesos vizinhos viram ruido.
+    """
+    if M.numel() < 2 or M.ndim < 2:
+        return torch.tensor(0.0, device=M.device)
+    tv_cols = (M[:, 1:] - M[:, :-1]).abs().mean()
+    tv_rows = (M[1:, :] - M[:-1, :]).abs().mean()
+    return (tv_cols + tv_rows) / 2.0
 
 
 def _hist_entropy(x: torch.Tensor, bins: int = 50) -> torch.Tensor:
@@ -92,6 +122,8 @@ def _layer_feats(W: torch.Tensor) -> np.ndarray:
         sv[1] / fro,
         sv[2] / fro,
         hf / lf,
+        _total_variation(M),
+        _autocorr1(x),
     ])
     return feats.detach().cpu().numpy().astype(np.float32)
 
