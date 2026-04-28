@@ -1,5 +1,18 @@
 # <img src="docs/imgs/logo-green.png" alt="icon" height="24" style="vertical-align:sub;"/> PFLlib: Personalized Federated Learning Library and Benchmark
 
+> **Nota — fork integrado ao `fl-poison-detector`**: Este diretório é uma cópia do [PFLlibMonza](https://github.com/VeigarGit/PFLlibMonza) (que por sua vez é fork do [PFLlib upstream](https://github.com/TsingZ0/PFLlib)) com modificações pra defesa contra clientes maliciosos via detector NLP/MLP. Para o pipeline completo (gerar dataset → treinar detector → defesa em produção como `cc=6` ou `cc=7`), ver os docs no diretório pai:
+> - [`../HOWTO.md`](../HOWTO.md) — passo-a-passo
+> - [`../MONZA_RESULTS.md`](../MONZA_RESULTS.md) — resultados experimentais
+> - [`../EVOLUTION.md`](../EVOLUTION.md) — narrativa metodológica
+>
+> Modificações neste fork:
+> - `system/main.py`: novos args `--dump_state_dicts`, `--detector_dir`
+> - `system/flcore/clients/clientmaliciousavg.py`: expõe `last_attack_type`
+> - `system/flcore/servers/serveravg.py`: defesas `cc==6` (NLP) e `cc==7` (MLP)
+> - `system/flcore/detector/`: módulo novo (cópia gêmea de `cc/cc_mlp/fl_save/features` do parent)
+
+---
+
 🎯*We built a beginner-friendly federated learning (FL) library and benchmark: **master FL in 2 hours—run it on your PC!** [Contribute](#easy-to-extend) your algorithms, datasets, and metrics to grow the FL community.*
 
 👏 The **[official website](http://www.pfllib.com)** and **[leaderboard](http://www.pfllib.com/benchmark.html)** is live! Our methods—[FedCP](https://github.com/TsingZ0/FedCP), [GPFL](https://github.com/TsingZ0/GPFL), and [FedDBE](https://github.com/TsingZ0/DBE)—lead the way. Notably, **FedDBE** stands out with robust performance across varying data heterogeneity levels.

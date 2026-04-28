@@ -17,9 +17,23 @@ Duas abordagens implementadas e comparadas:
 
 MLP+features ganha por 0.10–0.15 F1 em todos os cenários.
 
-Detalhes do experimento, números completos por ataque, e narrativa metodológica:
-- [`RESULTS.md`](RESULTS.md) — relatório dos achados
-- [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu
+Validação posterior em FL real (PFLlibMonza, 100 clientes Dirichlet non-IID, 30 maliciosos):
+
+| cc | Defesa | FPR | FRR | |
+|---|---|---:|---:|---|
+| 2 | Cluster cosseno (PFLlib baseline) | 0.000 | 0.262 | |
+| 3 | Cosseno + score (PFLlib baseline) | 0.053 | 0.114 | |
+| 6 | NLP DistilBERT (este trabalho) | 0.112 | 0.114 | |
+| **7** | **MLP+features (este trabalho)** | **0.000** | **0.156** | 🏆 |
+
+MLP+features Pareto-supera os 2 baselines do PFLlib. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
+
+Documentação:
+- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesa cc=6/cc=7)
+- [`MONZA_RESULTS.md`](MONZA_RESULTS.md) — resultados experimentais em FL real
+- [`RESULTS.md`](RESULTS.md) — bench original 4×2 (dataset sintético)
+- [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu (Fases 1-7)
+- [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das 4 defesas
 
 ## Quick start
 
@@ -36,15 +50,22 @@ Sempre executar a partir da **raiz do projeto** — paths como `state_dicts/`, `
 
 ```
 .
-├── README.md, RESULTS.md, EVOLUTION.md   # docs
+├── README.md, RESULTS.md, EVOLUTION.md   # docs do bench original (sintético)
+├── HOWTO.md, MONZA_RESULTS.md            # docs da integração FL real (PFLlibMonza)
 ├── requirements.txt, .gitignore
 ├── BertModelsclassify.ipynb              # notebook ad-hoc com flags de geração
-├── bench_grid_results.json               # resultados serializados do último run
-└── src/
-    ├── detector.py                       # DistilBERT+LoRA sobre pesos→bins
-    ├── detector_mlp.py                   # MLP sobre features handcrafted
-    ├── features.py                       # extrator de 60 features
-    └── bench_grid.py                     # orquestrador 4×2
+├── notebook_monza_analysis.ipynb         # gráficos comparativos das 4 defesas
+├── bench_grid_results.json               # resultados do bench 4×2
+├── src/
+│   ├── detector.py                       # DistilBERT+LoRA sobre pesos→bins
+│   ├── detector_mlp.py                   # MLP sobre features handcrafted
+│   ├── features.py                       # extrator de 60 features
+│   ├── bench_grid.py                     # orquestrador 4×2
+│   ├── cc.py                             # ClientCheck NLP — usado pelo MONZA
+│   ├── cc_mlp.py                         # ClientCheckMLP — usado pelo MONZA
+│   └── fl_save.py                        # helper de dump de state_dicts
+└── PFLlibMonza/                          # fork PFLlib (FL simulator) integrado
+    └── system/flcore/detector/           # cópia gêmea de cc/cc_mlp/fl_save/features
 ```
 
 Saídas geradas em runtime (todas no `.gitignore`, raiz do projeto):

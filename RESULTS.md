@@ -1,5 +1,7 @@
 # Detector de updates maliciosos em FL
 
+> Este documento é o relatório do **bench original** (dataset sintético gerado pelo `BertModelsclassify.ipynb`/`bench_grid.py`). Para resultados em **FL real** (PFLlibMonza, 100 clientes não-IID, 50 rounds com 4 defesas comparadas), ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
+
 Estudo comparativo de duas abordagens para detectar **state_dicts maliciosos** enviados por clientes em Federated Learning. Cliente FL é uma `FedAvgCNN` (~580k pesos); detector classifica binariamente um update vindo de cliente como `benigno` ou `malicioso` antes da agregação.
 
 ## TL;DR
@@ -99,4 +101,6 @@ requirements.txt       deps (torch, torchvision, transformers, peft, scipy, skle
 ## Conclusão
 
 Para detectar updates maliciosos em FL com benigno definido como "modelo global treinado + ruído de 1 step local", **features estatísticas/espectrais/espaciais combinadas com um MLP simples são suficientes**: F1 0.96–1.0 nas 4 variantes testadas, com 0–1% de FPR. Transformer sobre tokens-de-bins é dead-end estrutural pra esse problema (~0.88 plateau).
+
+Conclusão validada em FL real na **[Fase 7](EVOLUTION.md#fase-7--integração-com-fl-real-monza--pfllib)**: MLP+features mantém Pareto-superioridade sobre DistilBERT e sobre os baselines do PFLlib (cluster cosseno, cosseno+score). Ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
 
