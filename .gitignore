@@ -41,13 +41,17 @@ state_dicts.csv
 *.ckpt
 
 # Saidas de treino
-detector/
-detector_model/
+/detector/
+/detector_model/
 detector_model_merged/
 detector_model_quantized_8bit/
 detector_mlp_artifacts/
 detector_grid_runs/
+detector_monza_*/
+detector_mlp_monza_*/
+detector_runs/
 state_dicts_grid/
+state_dicts_monza_*/
 checkpoints/
 runs/
 wandb/
@@ -58,3 +62,23 @@ mnist_data/
 
 # Logs
 *.log
+
+# Plots gerados pelo notebook (rerodar gera de novo)
+plot_*.png
+
+# PFLlibMonza (FL real, integrado neste repo) — dirs gerados/locais
+PFLlibMonza/.venv/
+PFLlibMonza/venv/
+PFLlibMonza/dataset/MNIST/
+PFLlibMonza/dataset/Cifar*/
+PFLlibMonza/dataset/COVIDx/
+PFLlibMonza/dataset/utils/LEAF/data/
+PFLlibMonza/system/dump_*/
+PFLlibMonza/system/state_dicts*/
+PFLlibMonza/system/results/
+PFLlibMonza/system/models/
+PFLlibMonza/system/*.h5
+PFLlibMonza/system/*.deb
+PFLlibMonza/results/
+PFLlibMonza/results.zip
+PFLlibMonza/.claude/

@@ -32,6 +32,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
+from tqdm.auto import tqdm
 
 from features import N_FEATURES, extract_features, feature_names
 
@@ -86,7 +87,7 @@ def load_dataset() -> Tuple[np.ndarray, np.ndarray, List[str]]:
     X_rows: List[np.ndarray] = []
     y_list: List[int] = []
     types: List[str] = []
-    for f in files:
+    for f in tqdm(files, desc='extract features', unit='file'):
         sd = load_file(f)
         with open(f.replace('.safetensors', '.json')) as jf:
             meta = json.load(jf)

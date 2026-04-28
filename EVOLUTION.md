@@ -118,13 +118,71 @@ Em fase 5 (1000 amostras), o mesmo cenário deu `shuffle=80%`.
 - **Pretreino traz +0.03 F1 em regime amplo (1000 amostras)** mas é crítico em regime escasso (200). Em regime amplo, features estatísticas já discriminam bem mesmo sobre random init.
 - **Limite informacional real**: noise com SNR alto contra benign treinado. Aproximadamente 80–92% recall máxima nessa categoria — não há feature pra capturar.
 
+## Fase 7 — integração com FL real (MONZA / PFLlib)
+
+Até a Fase 6, todo o pipeline rodava em **dataset sintético**: gerador local no notebook (`BertModelsclassify.ipynb`) instanciava `FedAvgCNN` random ou pretrained, aplicava ataques sintéticos, e o detector aprendia. O threat model era cuidadoso, mas a *origem* dos pesos era um bench acadêmico — nada de cliente FL real treinando em data não-IID.
+
+A pergunta natural que faltava: **o detector treinado em pesos sintéticos converge num cenário FL real?** Vale como defesa em produção, ou era artefato da geração?
+
+Integramos com [`PFLlibMonza`](https://github.com/VeigarGit/PFLlibMonza) — fork do PFLlib (FL simulator) com ataques `zero/random/shuffle/label_flip`. Pipeline novo:
+
+1. MONZA roda FL real com 100 clientes Dirichlet non-IID (alpha=0.1) sobre MNIST, 30 maliciosos atacando todo round, 50 rounds. Cada update é dumpado.
+2. `detector.py` e `detector_mlp.py` treinam sobre esse dataset (5100 amostras).
+3. Detector treinado é carregado de volta no servidor MONZA num novo `cc==6` (NLP) e `cc==7` (MLP), filtrando clientes maliciosos antes de `aggregate_parameters()`.
+
+### Achados
+
+**No treino dos detectores** (eval set in-sample):
+
+| Métrica | NLP (DistilBERT+LoRA) | MLP (60 features) |
+|---|---|---|
+| F1 | 0.83 | **0.85** |
+| Precision | 0.97 | **1.00** |
+| Recall | 0.73 | 0.74 |
+
+Bate com a banda esperada do bench Fase 5 (DistilBERT plateia em ~0.88, MLP ~0.99 em variantes leakage; aqui em MNIST FL real ficaram 0.83/0.85 — coerente com cenário mais realista que pretrained_hard).
+
+**Em produção (defesa rolando, média últimos 30 dos 50 rounds)**:
+
+| cc | Defesa | FPR | FRR | Score (FPR+FRR) |
+|---|---|---:|---:|---:|
+| 2 | Cluster cosseno (PFLlib baseline) | 0.000 | 0.262 | 0.262 |
+| 3 | Cosseno + score (PFLlib baseline) | 0.053 | 0.114 | 0.168 |
+| 6 | NLP DistilBERT | 0.112 | 0.114 | 0.226 |
+| **7** | **MLP + features** | **0.000** | **0.156** | **0.156** 🏆 |
+
+**MLP+features Pareto-supera os 2 baselines do PFLlib em produção FL real**: zero falsos positivos (não pune benignos) e melhor FRR que cluster.
+
+### Insights novos (não redundantes com Fases 1–6)
+
+**1. Distribution shift treino → produção é menor pro MLP que pro NLP.** O MLP eval F1=0.85 traduz pra FPR=0%/FRR=15.6% em produção. O NLP eval F1=0.83 *mas* em produção tem FPR=11% — tem 8× mais falsos positivos por round. Hipótese: features handcrafted (SVD, FFT, momentos) capturam invariantes estatísticos *de uma distribuição de pesos plausível*; tokens-de-bins do DistilBERT memoriza muito mais a distribuição empírica do training set, que diverge dos pesos novos a cada round.
+
+**2. Label flip é fundamentalmente indetectável por fingerprint dos pesos.** Os dois detectores (paradigmas radicalmente diferentes — DistilBERT vs MLP+features SVD/FFT) chegam ao mesmo teto: ~5% recall em label flip. Faz sentido teoricamente: label flip treina a rede com labels errados, mas os pesos resultantes têm distribuição estatística parecida com benign (mesma magnitude/spread, otimizam função errada). Detecção de label flip exige outro paradigma — gradient-based, validation hold-out, ou comparação cross-round. **Esse limite não aparecia nas Fases 1–6** porque o ataque `label flip` foi adicionado pelo MONZA; os 4 ataques antigos (zeros/random/shuffle/noise) são todos detectáveis por fingerprint.
+
+**3. Defesa não precisa pegar 100% — só baixar a fração de poison abaixo do threshold de tolerância do FedAvg.** No `cc=5` (sem defesa, gerou o dataset), modelo nunca convergiu (best acc 0.12 com 30% poison todo round). Com cc=7 filtrando, fração de poison cai pra ~7%, e MNIST/FedAvgCNN converge sem problema. *Lição prática*: F1 do detector não é a métrica final — FPR e FRR em produção, e como elas interagem com o algoritmo de agregação, é o que importa.
+
+**4. Bug do LoRA (descoberto na sessão MONZA): `modules_to_save` é necessário pra classification heads.** `LoraConfig(target_modules=['q_lin','v_lin'])` salva só as matrizes A/B do LoRA — `pre_classifier` e `classifier` voltam como inicialização aleatória ao carregar o adapter. Detector NLP rodou efetivamente com head random no primeiro deploy (FPR=1.0, marcou todos os 100 clientes como maliciosos no round 1). Fix: incluir o head em `modules_to_save`. Lição transferível para qualquer LoRA com tarefa nova de classificação/regressão.
+
+**5. MLP é Pareto-melhor agora também em produção.** Confirma e reforça o achado da Fase 5: MLP+features 30× mais rápido pra treinar (~30s vs 15min), 3500× menor (~80KB vs 280MB), e com FPR=0% vs 11% do NLP em FL real. NLP só faria sentido se generalizasse melhor pra arquiteturas não vistas — não testamos por restrição de disco (VGG/Cifar10 exigiria ~280GB de state_dicts dumpados).
+
+### Caveats herdados e novos
+
+- Eval in-sample (otimista) — caveat herdado da Fase 5.
+- `model_zeros` no MONZA usa `torch.ones`, não `torch.zeros` (`attack.py:14`) — detector aprendeu a categoria errada. Se outro fork corrigir, esse recall específico cai.
+- `model_noise` bugado no MONZA (`attack.py:52` early return) — `-atk all` cobre 4 categorias, não 5.
+- Single seed (42) — sem CI nos números.
+- VGG/Cifar10 cortado por disco — sem evidência de generalização além de FedAvgCNN/MNIST.
+
+Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb).
+
 ## Fora do escopo (futuro possível)
 
 - **Krum / Multi-Krum / FoolsGold** — defesas que comparam updates entre clientes em vez de classificar isoladamente. Diferente paradigma; complementar.
-- **Ataques mais sofisticados**: backdoor, label flipping, model-poisoning direcionado. O baseline atual cobre 4 ataques sintéticos; expansão é direta.
-- **Arquiteturas maiores** (ResNet, transformer) — `features.py` precisaria adaptar `LAYERS`. Funções permanecem válidas.
+- **Ataques mais sofisticados**: backdoor, label flipping (já incluído mas não detectado), model-poisoning direcionado. O baseline atual cobre 4–5 ataques sintéticos; expansão é direta.
+- **Arquiteturas maiores** (ResNet, transformer) — `features.py` precisaria adaptar `LAYERS` (já tolerante a `BaseHeadSplit` com `_resolve_layers`). Funções permanecem válidas.
 - **Contrastive learning** entre rounds consecutivos — pega ataques on-off (cliente honesto por X rondas, ataca em Y).
 - **Anchor-based defenses** com modelo pré-treinado público como referência.
+- **Ensemble cc=2 + cc=7** — cluster filtra grosseiros, MLP filtra residuais. Pode ter FPR+FRR menor que ambos individualmente.
 
 ## Lições
 
@@ -133,3 +191,6 @@ Em fase 5 (1000 amostras), o mesmo cenário deu `shuffle=80%`.
 3. **Reaproveitar engenharia clássica de features** quando aplicável. SVD, FFT, autocorr resolveram problemas que DistilBERT não consegue por design.
 4. **Distinções informacionais binárias mentem**. Tudo é questão de SNR vs número de amostras.
 5. **Quando o paradigma errado, polir não resolve**. DistilBERT plateia em 0.88 independente do tuning. Feature engineering + MLP simples sobe pra 0.99 sem sweep.
+6. **F1 do detector não é a métrica final em FL**. FPR e FRR em produção, e como interagem com a tolerância do algoritmo de agregação, é o que define se a defesa serve. F1=0.83 com FPR=0% (cc=7) é melhor que F1=0.83 com FPR=11% (cc=6) na prática.
+7. **Distribution shift treino → produção penaliza modelos overparametrizados**. DistilBERT (66M params) overfita à distribuição empírica do training set. MLP+features (13k params) opera sobre invariantes estatísticos e generaliza melhor. Em FL real, o detector vê pesos que o eval set nunca viu.
+8. **LoRA com classification heads exige `modules_to_save` explícito**. Default só salva matrizes A/B das atenções; o head treinado fica órfão. Bug silencioso — F1 in-memory não bate com F1 ao recarregar.

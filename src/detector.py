@@ -21,6 +21,7 @@ from peft import LoraConfig, get_peft_model
 from safetensors.torch import load_file
 from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import StratifiedShuffleSplit
+from tqdm.auto import tqdm
 from transformers import (
     AutoModelForSequenceClassification,
     EarlyStoppingCallback,
@@ -106,7 +107,7 @@ def load_entries() -> List[Dict]:
         "Rode o notebook BertModelsclassify.ipynb pra gerar os state_dicts."
     )
     entries: List[Dict] = []
-    for f in files:
+    for f in tqdm(files, desc='preprocess state_dicts', unit='file'):
         sd = load_file(f)
         with open(f.replace('.safetensors', '.json')) as jf:
             meta = json.load(jf)
@@ -149,7 +150,12 @@ def build_and_train(seed: int, tokenized_train, tokenized_eval, run_dir: str):
     model = AutoModelForSequenceClassification.from_pretrained(
         MODEL_NAME, num_labels=2, ignore_mismatched_sizes=True
     )
-    lora_config = LoraConfig(r=8, lora_alpha=16, target_modules=['q_lin', 'v_lin'])
+    lora_config = LoraConfig(
+        r=8,
+        lora_alpha=16,
+        target_modules=['q_lin', 'v_lin'],
+        modules_to_save=['pre_classifier', 'classifier'],
+    )
     model = get_peft_model(model, lora_config)
 
     training_args = TrainingArguments(
