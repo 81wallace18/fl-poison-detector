@@ -19,7 +19,7 @@ import torch
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model
 from safetensors.torch import load_file
-from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import StratifiedShuffleSplit
 from tqdm.auto import tqdm
 from transformers import (
@@ -248,13 +248,14 @@ def main() -> None:
     logits = pred_output.predictions
     labels = pred_output.label_ids
     preds_default = np.argmax(logits, axis=-1)
+    acc_default = float(accuracy_score(labels, preds_default))
     f1_default = float(f1_score(labels, preds_default, zero_division=0))
     prec_default = float(precision_score(labels, preds_default, zero_division=0))
     rec_default = float(recall_score(labels, preds_default, zero_division=0))
 
     print('\n=== Avaliacao final (threshold default = argmax) ===')
-    print(f'  F1={f1_default:.4f} prec={prec_default:.4f} rec={rec_default:.4f}')
-    breakdown_by_type(preds_default, types_eval)
+    print(f'  acc={acc_default:.4f} F1={f1_default:.4f} prec={prec_default:.4f} rec={rec_default:.4f}')
+    by_type_default = breakdown_by_type(preds_default, types_eval)
 
     print('\n=== Threshold tunado ===')
     tuned = tune_threshold(logits, labels)
@@ -263,7 +264,7 @@ def main() -> None:
         f"prec={tuned['precision']:.4f} rec={tuned['recall']:.4f}  "
         '[in-sample, otimista]'
     )
-    breakdown_by_type(tuned['preds'], types_eval)
+    by_type_tuned = breakdown_by_type(tuned['preds'], types_eval)
 
     trainer.save_model(FINAL_MODEL_DIR)
     with open(os.path.join(FINAL_MODEL_DIR, 'metrics.json'), 'w') as f:
@@ -272,15 +273,18 @@ def main() -> None:
                 'split_seed': SEED,
                 'model_seed': MODEL_SEED,
                 'default_argmax': {
+                    'accuracy': acc_default,
                     'f1': f1_default,
                     'precision': prec_default,
                     'recall': rec_default,
+                    'by_type': by_type_default,
                 },
                 'tuned': {
                     'threshold': tuned['threshold'],
                     'f1': tuned['f1'],
                     'precision': tuned['precision'],
                     'recall': tuned['recall'],
+                    'by_type': by_type_tuned,
                     'note': 'threshold tuned on eval set (in-sample, optimistic)',
                 },
             },
