@@ -509,11 +509,19 @@ if __name__ == "__main__":
     parser.add_argument('-atk', '--atack', type = str, default='random')
     parser.add_argument('-ria', '--round_init_atk', type = int, default=0)
     parser.add_argument('-rfake', '--rate_client_fake', type = int, default=1) # de 0 a 1
-    parser.add_argument('-cc', '--cluster_comparation', type = int, default=0) # 0 score com modelo global, 1 score com comparação entre clientes, 2 comparação entre clientes e remove todo o cluster , 3 comparação entre clientes com pontuação, 4 entropia do modelo 5 sem nada 6 detector NLP (DistilBERT+LoRA via flcore.detector.cc)
+    parser.add_argument('-cc', '--cluster_comparation', type = int, default=0) # 0 score com modelo global, 1 score com comparação entre clientes, 2 comparação entre clientes e remove todo o cluster , 3 comparação entre clientes com pontuação, 4 entropia do modelo 5 sem nada 6 detector NLP, 7 detector MLP, 8 MLP+validacao publica
     parser.add_argument('--dump_state_dicts', type=str, default='',
         help='Se setado, dumpa state_dicts dos clients em cada round nesse diretorio (formato fl_save).')
     parser.add_argument('--detector_dir', type=str, default='',
-        help='Path do detector treinado (jpt/detector_final/...). Carregado quando -cc 6.')
+        help='Path do detector treinado. Usado em -cc 6, -cc 7 e -cc 8.')
+    parser.add_argument('--val_check_samples', type=int, default=256,
+        help='Amostras de holdout publico usadas pelo cc=8.')
+    parser.add_argument('--val_check_batch_size', type=int, default=128,
+        help='Batch size do holdout publico usado pelo cc=8.')
+    parser.add_argument('--val_check_min_delta', type=float, default=0.02,
+        help='Delta minimo de loss contra global para rejeicao no cc=8.')
+    parser.add_argument('--val_check_mad_k', type=float, default=3.0,
+        help='Multiplicador MAD para outlier de loss no cc=8.')
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
