@@ -4,7 +4,7 @@ Este repo integra **PFLlibMonza** (FL real, em `PFLlibMonza/`) com **jpt** (dete
 
 1. **MONZA** roda FL com clientes maliciosos e dumpa state_dicts → dataset
 2. **jpt** treina detectores (DistilBERT+LoRA e MLP+features) sobre o dataset
-3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` NLP, `cc=7` MLP, `cc=8` MLP+validação pública ou `cc=9` NLP+MLP+label-flip check) e filtra clientes maliciosos antes da agregação
+3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` NLP, `cc=7` MLP, `cc=8` MLP+validação pública ou `cc=9` MLP + NLP confirmado por label-flip check) e filtra clientes maliciosos antes da agregação
 
 Resultado experimental fechado em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb).
 
@@ -144,7 +144,7 @@ cd PFLlibMonza/system
     --detector_dir ../../detector_mlp_monza_cnn_mnist \
     --val_check_samples 256 --val_check_batch_size 128 \
     --val_check_min_delta 0.02 --val_check_mad_k 3.0
-# BERT + MLP + label-flip check
+# MLP + BERT confirmado pelo label-flip check
 ../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 9 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
     --bert_detector_dir ../../detector_monza_cnn_mnist \

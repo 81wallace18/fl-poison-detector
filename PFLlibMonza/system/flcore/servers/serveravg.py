@@ -398,7 +398,8 @@ class FedAvg(Server):
                             bert_hit = False
                         val_hit = bool(val_scores.get(client_id, {}).get('reject', False))
                         lf_hit = bool(lf_scores.get(client_id, {}).get('reject', False))
-                        if mlp_hit or bert_hit or val_hit or lf_hit:
+                        cc9_hit = bool(mlp_hit or (bert_hit and lf_hit)) if self.cc == 9 else False
+                        if mlp_hit or val_hit or cc9_hit:
                             if client_id in self.index_malicious:
                                 a += 1
                             if self.cc == 8:
