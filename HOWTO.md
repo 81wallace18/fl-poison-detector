@@ -4,7 +4,7 @@ Este repo integra **PFLlibMonza** (FL real, em `PFLlibMonza/`) com **jpt** (dete
 
 1. **MONZA** roda FL com clientes maliciosos e dumpa state_dicts → dataset
 2. **jpt** treina detectores (DistilBERT+LoRA e MLP+features) sobre o dataset
-3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` NLP, `cc=7` MLP, `cc=8` MLP+validação pública ou `cc=9` MLP + NLP confirmado por label-flip check) e filtra clientes maliciosos antes da agregação
+3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` NLP, `cc=7` MLP, `cc=8` MLP+validação pública, `cc=9` MLP + NLP confirmado por label-flip check ou `cc=10` MLP + NLP + comportamento label-flip) e filtra clientes maliciosos antes da agregação
 
 Resultado experimental fechado em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb).
 
@@ -34,9 +34,15 @@ cd PFLlibMonza/dataset
 python generate_MNIST.py noniid - dir
 ls MNIST/train/ | wc -l   # esperado: 100
 cd ../..
+.venv/bin/python scripts/create_train_mal.py --dataset-dir PFLlibMonza/dataset/MNIST --num-classes 10
+cd PFLlibMonza/dataset
+ls MNIST/train_mal/ | wc -l   # esperado: 100 para ataque malicious_label real
+cd ../..
 ```
 
 Scripts no `PFLlibMonza/dataset/` (`generate_MNIST.py`, `generate_Cifar10.py`, etc) hardcodam `num_clients` no topo do arquivo. Para outras configurações, edite a constante `num_clients`.
+
+> **Importante para label flip**: `PFLlibMonza/system/utils/data_utils.py` agora lê clientes maliciosos de `MNIST/train_mal/`. Se essa pasta não existir, o run falha de propósito. O script `scripts/create_train_mal.py` cria o `train_mal` com os mesmos `x` de treino e labels invertidos de forma determinística (`y_flip = num_classes - 1 - y`, no MNIST: 0↔9, 1↔8, ...).
 
 ### 3. Verificar GPU e imports
 
@@ -47,6 +53,7 @@ import torch
 from flcore.detector.cc import ClientCheck
 from flcore.detector.cc_mlp import ClientCheckMLP
 from flcore.detector.validation_check import PublicValidationCheck
+from flcore.detector.behavior_check import BehaviorLabelFlipCheck
 from flcore.detector import fl_save
 print('torch:', torch.__version__, '| cuda:', torch.cuda.is_available())
 print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')
@@ -124,9 +131,9 @@ ARTIFACTS_DIR=./detector_mlp_monza_cnn_mnist \
 
 **Tempo**: ~30 segundos (early stop em ~epoch 17). **Saída**: `detector_mlp_monza_cnn_mnist/` (~80 KB).
 
-### Passo 3 — Defesa em produção (cc=6 NLP / cc=7 MLP / cc=8 MLP+validação / cc=9 ensemble)
+### Passo 3 — Defesa em produção (cc=6 NLP / cc=7 MLP / cc=8 MLP+validação / cc=9 ensemble / cc=10 comportamento)
 
-Re-rodar FL com defesa ativada (`-cc 6`, `-cc 7`, `-cc 8` ou `-cc 9`) apontando pros detectores treinados:
+Re-rodar FL com defesa ativada (`-cc 6`, `-cc 7`, `-cc 8`, `-cc 9` ou `-cc 10`) apontando pros detectores treinados:
 
 ```bash
 cd PFLlibMonza/system
@@ -153,10 +160,19 @@ cd PFLlibMonza/system
     --lf_check_root_lr 0.01 --lf_check_root_steps 5 \
     --lf_check_min_loss_delta 0.02 --lf_check_mad_k 3.0 \
     --lf_check_max_final_cos 0.0
+# MLP + BERT + comportamento focado em label flip
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+    -cc 10 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
+    --bert_detector_dir ../../detector_monza_cnn_mnist \
+    --mlp_detector_dir ../../detector_mlp_monza_cnn_mnist \
+    --val_check_samples 512 --val_check_batch_size 128 \
+    --behavior_check_min_margin_delta 0.20 \
+    --behavior_check_min_loss_delta -0.05 \
+    --behavior_check_mad_k 3.0
 cd ../..
 ```
 
-**Saídas**: `PFLlibMonza/system/fpr_frr_results_6.csv`, `_7.csv`, `_8.csv` e `_9.csv`.
+**Saídas**: `PFLlibMonza/system/fpr_frr_results_6.csv`, `_7.csv`, `_8.csv`, `_9.csv` e `_10.csv`.
 
 ### Passo 3b (opcional) — Baselines do PFLlib
 
@@ -181,7 +197,7 @@ cd ../..
 
 ```bash
 cd PFLlibMonza/system
-for csv in fpr_frr_results_{2,3,6,7,8,9}.csv; do
+for csv in fpr_frr_results_{2,3,6,7,8,9,10}.csv; do
     echo "=== $csv ==="
     LC_NUMERIC=C tail -30 "$csv" | LC_NUMERIC=C awk -F, 'NF==3 && $1!~/Round/ {fpr+=$2; frr+=$3; n+=1} END {if(n>0) printf "  FPR_mean=%.4f  FRR_mean=%.4f  (n=%d)\n", fpr/n, frr/n, n}'
 done
@@ -194,7 +210,7 @@ cd ../..
 .venv/bin/jupyter notebook notebook_monza_analysis.ipynb
 ```
 
-Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, FPR/recall por tipo de ataque, foco em `label flip`, foco em `cc=6/7/8/9` e sumário. O notebook carrega `cc=2/3/6/7` quando os CSVs existem e inclui `cc=8`/`cc=9` automaticamente depois de gerar os CSVs correspondentes em `PFLlibMonza/system/`.
+Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, FPR/recall por tipo de ataque, foco em `label flip`, foco em `cc=6/7/8/9/10` e sumário. O notebook carrega `cc=2/3/6/7` quando os CSVs existem e inclui `cc=8`/`cc=9`/`cc=10` automaticamente depois de gerar os CSVs correspondentes em `PFLlibMonza/system/`.
 
 Os PNGs são gerados no diretório raiz como `plot_*.png` ao executar o notebook.
 
@@ -219,7 +235,7 @@ jpt/
 ├── RESULTS.md                   # bench atual: 4×2 grid de variantes
 ├── MONZA_RESULTS.md             # 🆕 resultados experimentais MONZA
 ├── HOWTO.md                     # 🆕 este arquivo
-├── notebook_monza_analysis.ipynb # 🆕 análise gráfica (cc=2/3/6/7 + cc=8 opcional)
+├── notebook_monza_analysis.ipynb # 🆕 análise gráfica (cc=2/3/6/7 + cc=8/9/10 opcional)
 ├── BertModelsclassify.ipynb     # gerador local de fallback (não-MONZA)
 ├── plot_*.png                   # 🆕 5 figuras geradas
 ├── src/
@@ -230,16 +246,18 @@ jpt/
 │   ├── cc.py                    # 🆕 ClientCheck (DistilBERT) — usado pelo MONZA
 │   ├── cc_mlp.py                # 🆕 ClientCheckMLP — usado pelo MONZA
 │   └── fl_save.py               # 🆕 helper de dump de state_dicts
+├── scripts/
+│   └── create_train_mal.py      # cria train_mal/ com label flip deterministico
 └── PFLlibMonza/                 # 🆕 fork do PFLlib (FL simulator)
     ├── system/
-    │   ├── main.py              # +args --dump_state_dicts, --detector_dir e cc=8 validation
+    │   ├── main.py              # +args --dump_state_dicts, detectores e cc=8/9/10
     │   ├── flcore/
     │   │   ├── attack/attack.py # ataques zeros/random/shuffle/label
     │   │   ├── clients/         # clientmaliciousavg.py expõe last_attack_type
-    │   │   ├── servers/serveravg.py # +cases cc==6 (NLP), cc==7 (MLP), cc==8 (MLP+val)
+    │   │   ├── servers/serveravg.py # +cases cc==6/7/8/9/10
     │   │   ├── trainmodel/models.py # FedAvgCNN, VGG, etc
     │   │   └── detector/        # 🆕 cópia gêmea de cc.py, cc_mlp.py, fl_save.py, features.py
-    │   ├── fpr_frr_results_*.csv # outputs por defesa (cc=2,3,6,7,8)
+    │   ├── fpr_frr_results_*.csv # outputs por defesa (cc=2,3,6,7,8,9,10)
     │   └── run.sh
     └── dataset/                 # precisa existir para gerar/ler MNIST particionado
 ```

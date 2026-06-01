@@ -2,7 +2,9 @@
 
 Pipeline completo: **PFLlibMonza** (FL real) gera dataset → **detector NLP/MLP** (jpt) treina → defesa volta como `cc=6/cc=7` no servidor MONZA, comparada com baselines `cc=2` (cluster) e `cc=3` (cosseno+score).
 
-> **Nota pós-resultado**: este relatório preserva os resultados fechados de 2026-04-28 para `cc=2/3/6/7`. O `cc=8` (MLP+validação pública para label flip) foi adicionado depois e ainda precisa de um novo run experimental para ter FPR/FRR reportados.
+> **Nota pós-resultado**: este relatório preserva os resultados fechados de 2026-04-28 para `cc=2/3/6/7`. O `cc=8` (MLP+validação pública para label flip), `cc=9` (BERT+MLP+label-flip check) e `cc=10` (BERT+MLP+comportamento label-flip) foram adicionados depois e ainda precisam de novo run experimental para ter FPR/FRR reportados.
+>
+> **Correção importante**: uma auditoria posterior encontrou bug em `utils/data_utils.py`: `is_malicious=True, is_train=True` imprimia "Malicious label", mas acabava lendo `test/` em vez de `train_mal/`. Portanto, os números antigos de `label flip` abaixo devem ser tratados como históricos e precisam ser rerodados após gerar `PFLlibMonza/dataset/MNIST/train_mal/`.
 
 **Data**: 2026-04-28
 **Hardware**: RTX 5060 Ti (16GB), CUDA 13, torch 2.11
@@ -63,7 +65,7 @@ Rodada com `-cc 5` (sem defesa) por 50 rounds:
 | 6 | NLP DistilBERT (este trabalho) | 0.1124 | 0.1144 |
 | **7** | **MLP + features (este trabalho)** | **0.0000** | **0.1556** |
 
-`cc=8` não aparece nesta tabela porque não existia no run original. Ele deve ser avaliado separadamente com `PFLlibMonza/system/fpr_frr_results_8.csv`.
+`cc=8`, `cc=9` e `cc=10` não aparecem nesta tabela porque não existiam no run original. Eles devem ser avaliados separadamente com `PFLlibMonza/system/fpr_frr_results_{8,9,10}.csv`.
 
 **Vencedor: cc=7 (MLP+features)** — Pareto-ótimo. Zero falsos positivos (não pune benignos) e captura 84% dos maliciosos. Supera todos os 3 baselines em pelo menos uma das duas métricas.
 
@@ -79,13 +81,16 @@ Mesmo com bug fixado e classifier head salvo corretamente, o NLP em produção t
 
 Tradeoff prático: para 100 clientes com 30 maliciosos, cc=6 fica banindo ~8 benignos por round.
 
-### 3. Label flip é fundamentalmente indetectável por fingerprint dos pesos
+### 3. Label flip exige rerun com `train_mal/` correto
 
-Dois paradigmas radicalmente diferentes (DistilBERT learning vs handcrafted features SVD/FFT/momentos) chegam ao mesmo teto: **~5% recall** em label flip. Faz sentido teoricamente: label flip treina a rede com labels errados — os pesos resultantes têm distribuição estatística parecida com benign (mesma magnitude/spread), só otimizam função errada.
+No run histórico, dois paradigmas radicalmente diferentes (DistilBERT learning vs handcrafted features SVD/FFT/momentos) chegaram ao mesmo teto: **~5% recall** em label flip. Depois foi encontrado o bug de leitura descrito no topo deste arquivo, então essa leitura não deve ser usada como conclusão final.
+
+A hipótese técnica continua válida: label flip tende a manter distribuição de pesos parecida com benign, mas otimiza função errada. Por isso, o rerun deve comparar fingerprint (`cc=6/7`) contra sinais de comportamento (`cc=8/9/10`).
 
 Detecção de label flip exige outra abordagem:
 - Comparação de gradientes entre clientes
 - Validation set hold-out público (`cc=8`, adicionado depois deste relatório)
+- Margem para rótulo invertido em holdout limpo (`cc=10`, adicionado depois deste relatório)
 - Comparação cross-round de comportamento do modelo
 
 ### 4. Bug do LoRA: `modules_to_save` é necessário pra classification heads
@@ -136,6 +141,6 @@ Artefatos preservados:
 - `detector_monza_cnn_mnist/` (~3 MB) — DistilBERT+LoRA treinado
 - `detector_mlp_monza_cnn_mnist/` (~80 KB) — MLP treinado
 - `PFLlibMonza/system/fpr_frr_results_{2,3,6,7}.csv` — resultados FL deste relatório
-- `PFLlibMonza/system/fpr_frr_results_8.csv` — esperado em novo run com `cc=8`
+- `PFLlibMonza/system/fpr_frr_results_{8,9,10}.csv` — esperado em novo run com defesas pós-relatório
 
 Análise visual em `notebook_monza_analysis.ipynb`.

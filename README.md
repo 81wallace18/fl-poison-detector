@@ -26,15 +26,17 @@ Validação posterior em FL real (PFLlibMonza, 100 clientes Dirichlet non-IID, 3
 | 6 | NLP DistilBERT (este trabalho) | 0.112 | 0.114 | |
 | **7** | **MLP+features (este trabalho)** | **0.000** | **0.156** | 🏆 |
 | 8 | MLP+validação pública | experimental | experimental | pega label flip |
+| 9 | BERT+MLP+label-flip check | experimental | experimental | comparação ensemble |
+| 10 | BERT+MLP+comportamento label-flip | experimental | experimental | recomendado para rerun de malicious_label |
 
 MLP+features Pareto-supera os 2 baselines do PFLlib. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
 
 Documentação:
-- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=6/cc=7/cc=8/cc=9)
+- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=6/cc=7/cc=8/cc=9/cc=10)
 - [`MONZA_RESULTS.md`](MONZA_RESULTS.md) — resultados experimentais em FL real
 - [`RESULTS.md`](RESULTS.md) — bench original 4×2 (dataset sintético)
 - [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu (Fases 1-7 + nota `cc=8`)
-- [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das defesas MONZA (`cc=8` opcional)
+- [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das defesas MONZA (`cc=8/9/10` opcionais)
 
 ## Quick start
 
@@ -49,6 +51,8 @@ python3.11 -m venv .venv
 Sempre executar a partir da **raiz do projeto** — paths como `state_dicts/`, `mnist_data/` etc. são relativos ao cwd.
 
 O ambiente Python é único: use sempre `.venv/` na raiz. MONZA também deve ser executado com essa venv (`../../.venv/bin/python` quando o cwd for `PFLlibMonza/system`).
+
+Nota sobre `malicious_label`: o runtime MONZA agora exige `PFLlibMonza/dataset/MNIST/train_mal/` para label flip real. Gere esse diretório com `scripts/create_train_mal.py`; resultados antigos de recall em `malicious_label` devem ser rerodados depois disso.
 
 ## Estrutura
 

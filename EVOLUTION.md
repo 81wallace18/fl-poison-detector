@@ -129,7 +129,7 @@ Integramos com [`PFLlibMonza`](https://github.com/VeigarGit/PFLlibMonza) — for
 1. MONZA roda FL real com 100 clientes Dirichlet non-IID (alpha=0.1) sobre MNIST, 30 maliciosos atacando todo round, 50 rounds. Cada update é dumpado.
 2. `detector.py` e `detector_mlp.py` treinam sobre esse dataset (5100 amostras).
 3. Detector treinado é carregado de volta no servidor MONZA num novo `cc==6` (NLP) e `cc==7` (MLP), filtrando clientes maliciosos antes de `aggregate_parameters()`.
-4. Pós-Fase 7, foi adicionado `cc==8` (MLP+validação pública) para atacar o limite de label flip. Ainda precisa run experimental fechado.
+4. Pós-Fase 7, foram adicionados `cc==8` (MLP+validação pública), `cc==9` (BERT+MLP+label-flip check) e `cc==10` (BERT+MLP+comportamento label-flip). Ainda precisam run experimental fechado depois de regenerar `train_mal/`.
 
 ### Achados
 
@@ -158,7 +158,7 @@ Bate com a banda esperada do bench Fase 5 (DistilBERT plateia em ~0.88, MLP ~0.9
 
 **1. Distribution shift treino → produção é menor pro MLP que pro NLP.** O MLP eval F1=0.85 traduz pra FPR=0%/FRR=15.6% em produção. O NLP eval F1=0.83 *mas* em produção tem FPR=11% — tem 8× mais falsos positivos por round. Hipótese: features handcrafted (SVD, FFT, momentos) capturam invariantes estatísticos *de uma distribuição de pesos plausível*; tokens-de-bins do DistilBERT memoriza muito mais a distribuição empírica do training set, que diverge dos pesos novos a cada round.
 
-**2. Label flip é fundamentalmente indetectável por fingerprint dos pesos.** Os dois detectores (paradigmas radicalmente diferentes — DistilBERT vs MLP+features SVD/FFT) chegam ao mesmo teto: ~5% recall em label flip. Faz sentido teoricamente: label flip treina a rede com labels errados, mas os pesos resultantes têm distribuição estatística parecida com benign (mesma magnitude/spread, otimizam função errada). Detecção de label flip exige outro paradigma — gradient-based, validation hold-out, ou comparação cross-round. **Esse limite não aparecia nas Fases 1–6** porque o ataque `label flip` foi adicionado pelo MONZA; os 4 ataques antigos (zeros/random/shuffle/noise) são todos detectáveis por fingerprint. O `cc=8` implementa a linha validation hold-out como próxima hipótese experimental.
+**2. Label flip exige sinal de comportamento e rerun com `train_mal/` correto.** Os detectores por fingerprint (DistilBERT vs MLP+features SVD/FFT) chegaram a ~5% recall em label flip no run histórico, mas depois encontramos bug em `utils/data_utils.py`: clientes maliciosos de label flip liam `test/` em vez de `train_mal/`. Então o número antigo é só histórico. A hipótese técnica permanece: label flip pode manter pesos estatisticamente parecidos com benign, mas otimiza função errada. Detecção precisa outro paradigma — validation hold-out, margem para rótulo invertido, gradient-based, ou comparação cross-round. `cc=8/9/10` são as hipóteses implementadas para esse rerun.
 
 **3. Defesa não precisa pegar 100% — só baixar a fração de poison abaixo do threshold de tolerância do FedAvg.** No `cc=5` (sem defesa, gerou o dataset), modelo nunca convergiu (best acc 0.12 com 30% poison todo round). Com cc=7 filtrando, fração de poison cai pra ~7%, e MNIST/FedAvgCNN converge sem problema. *Lição prática*: F1 do detector não é a métrica final — FPR e FRR em produção, e como elas interagem com o algoritmo de agregação, é o que importa.
 
@@ -173,7 +173,7 @@ Bate com a banda esperada do bench Fase 5 (DistilBERT plateia em ~0.88, MLP ~0.9
 - `model_noise` bugado no MONZA (`attack.py:52` early return) — `-atk all` cobre 4 categorias, não 5.
 - Single seed (42) — sem CI nos números.
 - VGG/Cifar10 cortado por disco — sem evidência de generalização além de FedAvgCNN/MNIST.
-- `cc=8` ainda sem métrica fechada — não comparar como vencedor antes de novo run.
+- `cc=8/9/10` ainda sem métrica fechada pós-correção de `train_mal` — não comparar como vencedores antes de novo run.
 
 Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb).
 
@@ -185,7 +185,7 @@ Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`noteboo
 - **Contrastive learning** entre rounds consecutivos — pega ataques on-off (cliente honesto por X rondas, ataca em Y).
 - **Anchor-based defenses** com modelo pré-treinado público como referência.
 - **Ensemble cc=2 + cc=7** — cluster filtra grosseiros, MLP filtra residuais. Pode ter FPR+FRR menor que ambos individualmente.
-- **Validar cc=8** — medir se MLP+validação pública reduz FRR em label flip sem perder o FPR=0% do cc=7.
+- **Validar cc=8/9/10** — medir se validação pública, label-flip check e comportamento por margem reduzem FRR em label flip sem perder o FPR=0% do cc=7.
 
 ## Lições
 
@@ -197,4 +197,4 @@ Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`noteboo
 6. **F1 do detector não é a métrica final em FL**. FPR e FRR em produção, e como interagem com a tolerância do algoritmo de agregação, é o que define se a defesa serve. F1=0.83 com FPR=0% (cc=7) é melhor que F1=0.83 com FPR=11% (cc=6) na prática.
 7. **Distribution shift treino → produção penaliza modelos overparametrizados**. DistilBERT (66M params) overfita à distribuição empírica do training set. MLP+features (13k params) opera sobre invariantes estatísticos e generaliza melhor. Em FL real, o detector vê pesos que o eval set nunca viu.
 8. **LoRA com classification heads exige `modules_to_save` explícito**. Default só salva matrizes A/B das atenções; o head treinado fica órfão. Bug silencioso — F1 in-memory não bate com F1 ao recarregar.
-9. **Label flip precisa sinal de comportamento, não só sinal de pesos**. `cc=8` adiciona validação pública justamente para observar efeito do update no loss limpo.
+9. **Label flip precisa sinal de comportamento, não só sinal de pesos**. `cc=8/9/10` adicionam validação pública, direção da camada final e margem para rótulo invertido para observar efeito do update no holdout limpo.
