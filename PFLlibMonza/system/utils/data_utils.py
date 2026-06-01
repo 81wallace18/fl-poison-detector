@@ -8,12 +8,17 @@ def read_data(dataset, idx, is_train=True, is_malicious=False):
     if is_malicious and is_train:
         print("Malicious label")
         data_dir = os.path.join('../dataset', dataset, 'train_mal/')
-    if is_train and not is_malicious:
+    elif is_train:
         data_dir = os.path.join('../dataset', dataset, 'train/')
     else:
         data_dir = os.path.join('../dataset', dataset, 'test/')
 
     file = data_dir + str(idx) + '.npz'
+    if is_malicious and is_train and not os.path.exists(file):
+        raise FileNotFoundError(
+            f"Dataset malicioso de label flip nao encontrado: {file}. "
+            "Regenere o dataset criando ../dataset/<dataset>/train_mal/ com labels invertidos."
+        )
     with open(file, 'rb') as f:
         data = np.load(f, allow_pickle=True)['data'].tolist()
     return data
@@ -58,4 +63,3 @@ def process_Shakespeare(data):
     X = torch.Tensor(data['x']).type(torch.int64)
     y = torch.Tensor(data['y']).type(torch.int64)
     return [(x, y) for x, y in zip(X, y)]
-
