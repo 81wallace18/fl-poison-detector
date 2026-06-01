@@ -4,7 +4,7 @@ Este repo integra **PFLlibMonza** (FL real, em `PFLlibMonza/`) com **jpt** (dete
 
 1. **MONZA** roda FL com clientes maliciosos e dumpa state_dicts → dataset
 2. **jpt** treina detectores (DistilBERT+LoRA e MLP+features) sobre o dataset
-3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` NLP, `cc=7` MLP ou `cc=8` MLP+validação pública) e filtra clientes maliciosos antes da agregação
+3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` NLP, `cc=7` MLP, `cc=8` MLP+validação pública ou `cc=9` NLP+MLP+label-flip check) e filtra clientes maliciosos antes da agregação
 
 Resultado experimental fechado em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb).
 
@@ -124,9 +124,9 @@ ARTIFACTS_DIR=./detector_mlp_monza_cnn_mnist \
 
 **Tempo**: ~30 segundos (early stop em ~epoch 17). **Saída**: `detector_mlp_monza_cnn_mnist/` (~80 KB).
 
-### Passo 3 — Defesa em produção (cc=6 NLP / cc=7 MLP / cc=8 MLP+validação)
+### Passo 3 — Defesa em produção (cc=6 NLP / cc=7 MLP / cc=8 MLP+validação / cc=9 ensemble)
 
-Re-rodar FL com defesa ativada (`-cc 6`, `-cc 7` ou `-cc 8`) apontando pro detector treinado:
+Re-rodar FL com defesa ativada (`-cc 6`, `-cc 7`, `-cc 8` ou `-cc 9`) apontando pros detectores treinados:
 
 ```bash
 cd PFLlibMonza/system
@@ -144,10 +144,19 @@ cd PFLlibMonza/system
     --detector_dir ../../detector_mlp_monza_cnn_mnist \
     --val_check_samples 256 --val_check_batch_size 128 \
     --val_check_min_delta 0.02 --val_check_mad_k 3.0
+# BERT + MLP + label-flip check
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+    -cc 9 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
+    --bert_detector_dir ../../detector_monza_cnn_mnist \
+    --mlp_detector_dir ../../detector_mlp_monza_cnn_mnist \
+    --val_check_samples 256 --val_check_batch_size 128 \
+    --lf_check_root_lr 0.01 --lf_check_root_steps 5 \
+    --lf_check_min_loss_delta 0.02 --lf_check_mad_k 3.0 \
+    --lf_check_max_final_cos 0.0
 cd ../..
 ```
 
-**Saídas**: `PFLlibMonza/system/fpr_frr_results_6.csv`, `_7.csv` e `_8.csv`.
+**Saídas**: `PFLlibMonza/system/fpr_frr_results_6.csv`, `_7.csv`, `_8.csv` e `_9.csv`.
 
 ### Passo 3b (opcional) — Baselines do PFLlib
 
@@ -172,7 +181,7 @@ cd ../..
 
 ```bash
 cd PFLlibMonza/system
-for csv in fpr_frr_results_{2,3,6,7,8}.csv; do
+for csv in fpr_frr_results_{2,3,6,7,8,9}.csv; do
     echo "=== $csv ==="
     LC_NUMERIC=C tail -30 "$csv" | LC_NUMERIC=C awk -F, 'NF==3 && $1!~/Round/ {fpr+=$2; frr+=$3; n+=1} END {if(n>0) printf "  FPR_mean=%.4f  FRR_mean=%.4f  (n=%d)\n", fpr/n, frr/n, n}'
 done
@@ -185,7 +194,7 @@ cd ../..
 .venv/bin/jupyter notebook notebook_monza_analysis.ipynb
 ```
 
-Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, FPR/recall por tipo de ataque, foco em `label flip`, foco em `cc=6/7/8` e sumário. O notebook carrega `cc=2/3/6/7` quando os CSVs existem e inclui `cc=8` automaticamente depois de gerar `PFLlibMonza/system/fpr_frr_results_8.csv`.
+Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, FPR/recall por tipo de ataque, foco em `label flip`, foco em `cc=6/7/8/9` e sumário. O notebook carrega `cc=2/3/6/7` quando os CSVs existem e inclui `cc=8`/`cc=9` automaticamente depois de gerar os CSVs correspondentes em `PFLlibMonza/system/`.
 
 Os PNGs são gerados no diretório raiz como `plot_*.png` ao executar o notebook.
 

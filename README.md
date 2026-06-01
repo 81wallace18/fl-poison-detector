@@ -30,7 +30,7 @@ Validação posterior em FL real (PFLlibMonza, 100 clientes Dirichlet non-IID, 3
 MLP+features Pareto-supera os 2 baselines do PFLlib. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
 
 Documentação:
-- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=6/cc=7/cc=8)
+- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=6/cc=7/cc=8/cc=9)
 - [`MONZA_RESULTS.md`](MONZA_RESULTS.md) — resultados experimentais em FL real
 - [`RESULTS.md`](RESULTS.md) — bench original 4×2 (dataset sintético)
 - [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu (Fases 1-7 + nota `cc=8`)
