@@ -60,6 +60,7 @@ Combinação 2×2 = 4 datasets.
 
 ```bash
 # 1) Setup
+python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
 # 2) Roda o grid completo (4 datasets × 2 detectores, ~30-40 min na RTX 5060 Ti)
@@ -89,7 +90,7 @@ detector_mlp.py        MLP sobre features
 features.py            extract_features(state_dict) -> (np.ndarray[60], names)
 bench_grid.py          orquestrador do grid 4×2
 BertModelsclassify.ipynb  notebook de exploração + geração de datasets ad-hoc
-requirements.txt       deps (torch, torchvision, transformers, peft, scipy, sklearn, ...)
+requirements.txt       deps unificadas para detectores, MONZA e notebooks
 ```
 
 ## Limitações conhecidas
@@ -102,5 +103,4 @@ requirements.txt       deps (torch, torchvision, transformers, peft, scipy, skle
 
 Para detectar updates maliciosos em FL com benigno definido como "modelo global treinado + ruído de 1 step local", **features estatísticas/espectrais/espaciais combinadas com um MLP simples são suficientes**: F1 0.96–1.0 nas 4 variantes testadas, com 0–1% de FPR. Transformer sobre tokens-de-bins é dead-end estrutural pra esse problema (~0.88 plateau).
 
-Conclusão validada em FL real na **[Fase 7](EVOLUTION.md#fase-7--integração-com-fl-real-monza--pfllib)**: MLP+features mantém Pareto-superioridade sobre DistilBERT e sobre os baselines do PFLlib (cluster cosseno, cosseno+score). Ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
-
+Conclusão validada em FL real na **[Fase 7](EVOLUTION.md#fase-7--integração-com-fl-real-monza--pfllib)**: MLP+features mantém Pareto-superioridade sobre DistilBERT e sobre os baselines do PFLlib (cluster cosseno, cosseno+score). O `cc=8` é uma defesa MONZA posterior ao bench sintético, criada para testar label flip com validação pública. Ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).

@@ -2,6 +2,8 @@
 
 Pipeline completo: **PFLlibMonza** (FL real) gera dataset → **detector NLP/MLP** (jpt) treina → defesa volta como `cc=6/cc=7` no servidor MONZA, comparada com baselines `cc=2` (cluster) e `cc=3` (cosseno+score).
 
+> **Nota pós-resultado**: este relatório preserva os resultados fechados de 2026-04-28 para `cc=2/3/6/7`. O `cc=8` (MLP+validação pública para label flip) foi adicionado depois e ainda precisa de um novo run experimental para ter FPR/FRR reportados.
+
 **Data**: 2026-04-28
 **Hardware**: RTX 5060 Ti (16GB), CUDA 13, torch 2.11
 **Seed**: 42
@@ -61,6 +63,8 @@ Rodada com `-cc 5` (sem defesa) por 50 rounds:
 | 6 | NLP DistilBERT (este trabalho) | 0.1124 | 0.1144 |
 | **7** | **MLP + features (este trabalho)** | **0.0000** | **0.1556** |
 
+`cc=8` não aparece nesta tabela porque não existia no run original. Ele deve ser avaliado separadamente com `PFLlibMonza/system/fpr_frr_results_8.csv`.
+
 **Vencedor: cc=7 (MLP+features)** — Pareto-ótimo. Zero falsos positivos (não pune benignos) e captura 84% dos maliciosos. Supera todos os 3 baselines em pelo menos uma das duas métricas.
 
 ## Achados
@@ -81,7 +85,7 @@ Dois paradigmas radicalmente diferentes (DistilBERT learning vs handcrafted feat
 
 Detecção de label flip exige outra abordagem:
 - Comparação de gradientes entre clientes
-- Validation set hold-out público
+- Validation set hold-out público (`cc=8`, adicionado depois deste relatório)
 - Comparação cross-round de comportamento do modelo
 
 ### 4. Bug do LoRA: `modules_to_save` é necessário pra classification heads
@@ -119,7 +123,7 @@ Score combinado (FPR + FRR, menor = melhor):
 
 - **Cross-validation seed**: re-rodar com seeds 123, 456, 789 e reportar média ± std.
 - **Cifar10/VGG**: requer liberar 100+ GB ou implementar amostragem no `fl_save` (dump 1 a cada N rounds).
-- **Label flip detector**: explorar gradient-based ou validation-based approaches.
+- **Validar `cc=8`**: rodar MLP+validação pública contra `label_flip` e comparar FPR/FRR com `cc=7`.
 - **Combinar cc=2 + cc=7**: cluster filtra grosseiros, MLP filtra residuais. Ensemble pode ter FPR+FRR menor que ambos individualmente.
 - **Resistência a poisoning adaptativo**: testar atacantes que conhecem o detector e tentam evitar.
 
@@ -131,6 +135,7 @@ Artefatos preservados:
 - `state_dicts_monza_cnn_mnist/` (12 GB) — dataset gerado
 - `detector_monza_cnn_mnist/` (~3 MB) — DistilBERT+LoRA treinado
 - `detector_mlp_monza_cnn_mnist/` (~80 KB) — MLP treinado
-- `PFLlibMonza/system/fpr_frr_results_{2,3,6,7}.csv` — resultados FL
+- `PFLlibMonza/system/fpr_frr_results_{2,3,6,7}.csv` — resultados FL deste relatório
+- `PFLlibMonza/system/fpr_frr_results_8.csv` — esperado em novo run com `cc=8`
 
 Análise visual em `notebook_monza_analysis.ipynb`.

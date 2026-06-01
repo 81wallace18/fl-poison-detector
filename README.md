@@ -25,19 +25,21 @@ Validação posterior em FL real (PFLlibMonza, 100 clientes Dirichlet non-IID, 3
 | 3 | Cosseno + score (PFLlib baseline) | 0.053 | 0.114 | |
 | 6 | NLP DistilBERT (este trabalho) | 0.112 | 0.114 | |
 | **7** | **MLP+features (este trabalho)** | **0.000** | **0.156** | 🏆 |
+| 8 | MLP+validação pública | experimental | experimental | pega label flip |
 
 MLP+features Pareto-supera os 2 baselines do PFLlib. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
 
 Documentação:
-- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesa cc=6/cc=7)
+- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=6/cc=7/cc=8)
 - [`MONZA_RESULTS.md`](MONZA_RESULTS.md) — resultados experimentais em FL real
 - [`RESULTS.md`](RESULTS.md) — bench original 4×2 (dataset sintético)
-- [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu (Fases 1-7)
+- [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu (Fases 1-7 + nota `cc=8`)
 - [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das 4 defesas
 
 ## Quick start
 
 ```bash
+python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python src/bench_grid.py
 ```
@@ -45,6 +47,8 @@ Documentação:
 `bench_grid.py` faz tudo: treina baseline em MNIST, gera 4 variantes do dataset, roda os 2 detectores em cada uma, imprime tabela final + breakdown por ataque, salva tudo em `bench_grid_results.json`. ~30–40 min na RTX 5060 Ti.
 
 Sempre executar a partir da **raiz do projeto** — paths como `state_dicts/`, `mnist_data/` etc. são relativos ao cwd.
+
+O ambiente Python é único: use sempre `.venv/` na raiz. MONZA também deve ser executado com essa venv (`../../.venv/bin/python` quando o cwd for `PFLlibMonza/system`).
 
 ## Estrutura
 
@@ -65,7 +69,7 @@ Sempre executar a partir da **raiz do projeto** — paths como `state_dicts/`, `
 │   ├── cc_mlp.py                         # ClientCheckMLP — usado pelo MONZA
 │   └── fl_save.py                        # helper de dump de state_dicts
 └── PFLlibMonza/                          # fork PFLlib (FL simulator) integrado
-    └── system/flcore/detector/           # cópia gêmea de cc/cc_mlp/fl_save/features
+    └── system/flcore/detector/           # inferência MONZA: cc/cc_mlp/fl_save/features/validation_check
 ```
 
 Saídas geradas em runtime (todas no `.gitignore`, raiz do projeto):

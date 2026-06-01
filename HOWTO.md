@@ -4,7 +4,7 @@ Este repo integra **PFLlibMonza** (FL real, em `PFLlibMonza/`) com **jpt** (dete
 
 1. **MONZA** roda FL com clientes maliciosos e dumpa state_dicts → dataset
 2. **jpt** treina detectores (DistilBERT+LoRA e MLP+features) sobre o dataset
-3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` NLP ou `cc=7` MLP) e filtra clientes maliciosos antes da agregação
+3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` NLP, `cc=7` MLP ou `cc=8` MLP+validação pública) e filtra clientes maliciosos antes da agregação
 
 Resultado experimental fechado em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb).
 
@@ -18,18 +18,14 @@ Resultado experimental fechado em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análi
 git clone https://github.com/81wallace18/fl-poison-detector.git jpt
 cd jpt
 
-# venv pro jpt (treino dos detectores)
+# Ambiente unico na raiz para jpt + MONZA
 python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-
-# venv pro MONZA (FL simulator)
-cd PFLlibMonza
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu130
-cd ..
 ```
 
-> **GPU**: o pipeline assume CUDA (testado em RTX 5060 Ti, sm_120, torch 2.11.0+cu130). Se sua GPU é mais antiga, pode usar torch padrão (sem `--extra-index-url`), mas confira que `torch.cuda.is_available()` retorna True.
+> **GPU**: o `requirements.txt` unico ja aponta para o indice CUDA 13.0 do PyTorch. Pipeline testado em RTX 5060 Ti, sm_120. Se sua GPU for mais antiga, ajuste o indice/versao do PyTorch e confira que `torch.cuda.is_available()` retorna True.
+
+Todos os comandos abaixo usam essa mesma `.venv` da raiz. Quando o comando roda dentro de `PFLlibMonza/system`, o caminho correto é `../../.venv/bin/python`.
 
 ### 2. Gerar particionamento MNIST (100 clientes Dirichlet non-IID)
 
@@ -46,10 +42,11 @@ Scripts no `PFLlibMonza/dataset/` (`generate_MNIST.py`, `generate_Cifar10.py`, e
 
 ```bash
 cd PFLlibMonza/system
-../.venv/bin/python -c "
+../../.venv/bin/python -c "
 import torch
 from flcore.detector.cc import ClientCheck
 from flcore.detector.cc_mlp import ClientCheckMLP
+from flcore.detector.validation_check import PublicValidationCheck
 from flcore.detector import fl_save
 print('torch:', torch.__version__, '| cuda:', torch.cuda.is_available())
 print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')
@@ -70,7 +67,7 @@ Em `PFLlibMonza/system/`, rodar simulação FL com `--dump_state_dicts <out_dir>
 
 ```bash
 cd PFLlibMonza/system
-../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 5 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
     --dump_state_dicts ../../state_dicts_monza_cnn_mnist
 cd ../..
@@ -126,24 +123,30 @@ ARTIFACTS_DIR=./detector_mlp_monza_cnn_mnist \
 
 **Tempo**: ~30 segundos (early stop em ~epoch 17). **Saída**: `detector_mlp_monza_cnn_mnist/` (~80 KB).
 
-### Passo 3 — Defesa em produção (cc=6 NLP / cc=7 MLP)
+### Passo 3 — Defesa em produção (cc=6 NLP / cc=7 MLP / cc=8 MLP+validação)
 
-Re-rodar FL com defesa ativada (`-cc 6` ou `-cc 7`) apontando pro detector treinado:
+Re-rodar FL com defesa ativada (`-cc 6`, `-cc 7` ou `-cc 8`) apontando pro detector treinado:
 
 ```bash
 cd PFLlibMonza/system
 # NLP
-../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 6 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
     --detector_dir ../../detector_monza_cnn_mnist
 # MLP
-../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 7 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
     --detector_dir ../../detector_mlp_monza_cnn_mnist
+# MLP + validacao publica (recomendado para label flip)
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+    -cc 8 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
+    --detector_dir ../../detector_mlp_monza_cnn_mnist \
+    --val_check_samples 256 --val_check_batch_size 128 \
+    --val_check_min_delta 0.02 --val_check_mad_k 3.0
 cd ../..
 ```
 
-**Saídas**: `PFLlibMonza/system/fpr_frr_results_6.csv` e `_7.csv`.
+**Saídas**: `PFLlibMonza/system/fpr_frr_results_6.csv`, `_7.csv` e `_8.csv`.
 
 ### Passo 3b (opcional) — Baselines do PFLlib
 
@@ -152,10 +155,10 @@ Pra comparar com defesas existentes (cosseno, cluster):
 ```bash
 cd PFLlibMonza/system
 # Cluster cosseno (cc=2)
-../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 2 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
 # Cosseno + score (cc=3)
-../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 3 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
 cd ../..
 ```
@@ -168,7 +171,7 @@ cd ../..
 
 ```bash
 cd PFLlibMonza/system
-for csv in fpr_frr_results_{2,3,6,7}.csv; do
+for csv in fpr_frr_results_{2,3,6,7,8}.csv; do
     echo "=== $csv ==="
     LC_NUMERIC=C tail -30 "$csv" | LC_NUMERIC=C awk -F, 'NF==3 && $1!~/Round/ {fpr+=$2; frr+=$3; n+=1} END {if(n>0) printf "  FPR_mean=%.4f  FRR_mean=%.4f  (n=%d)\n", fpr/n, frr/n, n}'
 done
@@ -181,7 +184,7 @@ cd ../..
 .venv/bin/jupyter notebook notebook_monza_analysis.ipynb
 ```
 
-Gera 5 gráficos: FPR/FRR por round (4 defesas), trade-off scatter, métricas dos detectores, recall por tipo de ataque, sumário.
+Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, recall por tipo de ataque e sumário. Runs antigos cobrem 4 defesas (`cc=2/3/6/7`); inclua `cc=8` depois de gerar `fpr_frr_results_8.csv`.
 
 PNGs estáticos já estão no repo: `plot_*.png`.
 
@@ -209,18 +212,16 @@ jpt/
 │   └── fl_save.py               # 🆕 helper de dump de state_dicts
 └── PFLlibMonza/                 # 🆕 fork do PFLlib (FL simulator)
     ├── system/
-    │   ├── main.py              # +args --dump_state_dicts e --detector_dir
+    │   ├── main.py              # +args --dump_state_dicts, --detector_dir e cc=8 validation
     │   ├── flcore/
     │   │   ├── attack/attack.py # ataques zeros/random/shuffle/label
     │   │   ├── clients/         # clientmaliciousavg.py expõe last_attack_type
-    │   │   ├── servers/serveravg.py # +cases cc==6 (NLP) e cc==7 (MLP)
+    │   │   ├── servers/serveravg.py # +cases cc==6 (NLP), cc==7 (MLP), cc==8 (MLP+val)
     │   │   ├── trainmodel/models.py # FedAvgCNN, VGG, etc
     │   │   └── detector/        # 🆕 cópia gêmea de cc.py, cc_mlp.py, fl_save.py, features.py
-    │   ├── fpr_frr_results_*.csv # outputs por defesa (cc=2,3,6,7)
+    │   ├── fpr_frr_results_*.csv # outputs por defesa (cc=2,3,6,7,8)
     │   └── run.sh
-    ├── dataset/
-    │   └── generate_*.py        # particionamento Dirichlet non-IID por dataset
-    └── requirements.txt         # deps consolidadas (torch cu130 + transformers + peft + ...)
+    └── dataset/                 # precisa existir para gerar/ler MNIST particionado
 ```
 
 ---
@@ -229,7 +230,7 @@ jpt/
 
 ### "ModuleNotFoundError: No module named 'cvxpy'"
 
-`PFLlibMonza/system/main.py` importa todos os servers no topo. `serverpac.py` requer cvxpy. Já está em `PFLlibMonza/requirements.txt`. Se faltar:
+`PFLlibMonza/system/main.py` importa todos os servers no topo. `serverpac.py` requer cvxpy. Já está no `requirements.txt` da raiz. Se faltar:
 
 ```bash
 .venv/bin/pip install cvxpy

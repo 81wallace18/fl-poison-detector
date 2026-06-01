@@ -1,6 +1,6 @@
 # <img src="docs/imgs/logo-green.png" alt="icon" height="24" style="vertical-align:sub;"/> PFLlib: Personalized Federated Learning Library and Benchmark
 
-> **Nota — fork integrado ao `fl-poison-detector`**: Este diretório é uma cópia do [PFLlibMonza](https://github.com/VeigarGit/PFLlibMonza) (que por sua vez é fork do [PFLlib upstream](https://github.com/TsingZ0/PFLlib)) com modificações pra defesa contra clientes maliciosos via detector NLP/MLP. Para o pipeline completo (gerar dataset → treinar detector → defesa em produção como `cc=6` ou `cc=7`), ver os docs no diretório pai:
+> **Nota — fork integrado ao `fl-poison-detector`**: Este diretório é uma cópia do [PFLlibMonza](https://github.com/VeigarGit/PFLlibMonza) (que por sua vez é fork do [PFLlib upstream](https://github.com/TsingZ0/PFLlib)) com modificações pra defesa contra clientes maliciosos via detector NLP/MLP. Para o pipeline completo (gerar dataset → treinar detector → defesa em produção como `cc=6`, `cc=7` ou `cc=8`), ver os docs no diretório pai:
 > - [`../HOWTO.md`](../HOWTO.md) — passo-a-passo
 > - [`../MONZA_RESULTS.md`](../MONZA_RESULTS.md) — resultados experimentais
 > - [`../EVOLUTION.md`](../EVOLUTION.md) — narrativa metodológica
@@ -330,12 +330,12 @@ Client 2         Size of data: 1630      Labels:  [0 3 6 9]
 ## Environments
 Install [CUDA](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html). 
 
-Install [conda latest](https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh) and activate conda. 
-
-For additional configurations, refer to the `prepare.sh` script.  
+This fork uses the root project virtualenv, shared by the detector code and MONZA.
 
 ```bash
-conda env create -f env_cuda_latest.yaml  # Downgrade torch via pip if needed to match the CUDA version
+cd ..
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 ## How to start simulating (examples for FedAvg)
