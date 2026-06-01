@@ -9,6 +9,7 @@ import csv
 import os
 from torch.utils.data import DataLoader
 from flcore.detector import fl_save
+from flcore.detector.behavior_check import BehaviorLabelFlipCheck
 from flcore.detector.cc import ClientCheck
 from flcore.detector.cc_mlp import ClientCheckMLP
 from flcore.detector.label_flip_check import LabelFlipCheck
@@ -32,6 +33,8 @@ class FedAvg(Server):
             self.csv_filename = 'fpr_frr_results_8.csv'
         elif self.cc ==9:
             self.csv_filename = 'fpr_frr_results_9.csv'
+        elif self.cc ==10:
+            self.csv_filename = 'fpr_frr_results_10.csv'
         else:
             self.csv_filename = 'f.csv'
         # Write headers if the file is empty (first time writing)
@@ -75,6 +78,18 @@ class FedAvg(Server):
             self.mlp_client_check = ClientCheckMLP(mlp_detector_dir)
             self.bert_client_check = ClientCheck(bert_detector_dir)
             self.label_flip_check = None
+        elif self.cc == 10:
+            mlp_detector_dir = getattr(args, 'mlp_detector_dir', '') or getattr(args, 'detector_dir', '') or ''
+            bert_detector_dir = getattr(args, 'bert_detector_dir', '') or ''
+            if not mlp_detector_dir:
+                raise ValueError("cc=10 requer --mlp_detector_dir ou --detector_dir apontando pro MLP artifacts dir.")
+            if not bert_detector_dir:
+                raise ValueError("cc=10 requer --bert_detector_dir apontando pro modelo DistilBERT treinado.")
+            print(f"[cc=10] Carregando detector MLP de {mlp_detector_dir}")
+            print(f"[cc=10] Carregando detector NLP de {bert_detector_dir}")
+            self.mlp_client_check = ClientCheckMLP(mlp_detector_dir)
+            self.bert_client_check = ClientCheck(bert_detector_dir)
+            self.behavior_label_flip_check = None
 
         # select slow clients
         self.set_slow_clients()
@@ -95,6 +110,15 @@ class FedAvg(Server):
                 min_loss_delta=getattr(args, 'lf_check_min_loss_delta', 0.02),
                 mad_k=getattr(args, 'lf_check_mad_k', 3.0),
                 max_final_cos=getattr(args, 'lf_check_max_final_cos', 0.0),
+            )
+        if self.cc == 10:
+            self.behavior_label_flip_check = BehaviorLabelFlipCheck(
+                self._build_public_validation_loader(label='cc=10'),
+                self.device,
+                num_classes=getattr(args, 'num_classes', 10),
+                min_margin_delta=getattr(args, 'behavior_check_min_margin_delta', 0.20),
+                min_loss_delta=getattr(args, 'behavior_check_min_loss_delta', -0.05),
+                mad_k=getattr(args, 'behavior_check_mad_k', 3.0),
             )
 
         print(f"\nJoin ratio / total clients: {self.join_ratio} / {self.num_clients}")
@@ -372,11 +396,12 @@ class FedAvg(Server):
                     print(f"Tempo de execução: {vish:.4f} segundos")
                 if self.cc==5:
                     print("vai rolar nada")
-                if self.cc in (6, 7, 8, 9):
+                if self.cc in (6, 7, 8, 9, 10):
                     oi = time.time()
-                    detector_name = 'NLP' if self.cc == 6 else ('MLP' if self.cc == 7 else ('MLP+VAL' if self.cc == 8 else 'NLP+MLP+LF'))
+                    detector_name = 'NLP' if self.cc == 6 else ('MLP' if self.cc == 7 else ('MLP+VAL' if self.cc == 8 else ('NLP+MLP+LF' if self.cc == 9 else 'NLP+MLP+BEHAVIOR')))
                     val_scores = {}
                     lf_scores = {}
+                    behavior_scores = {}
                     if self.cc == 8:
                         val_scores = self.public_val_check.score_round(
                             self.global_model, self.uploaded_models, self.ids
@@ -385,12 +410,16 @@ class FedAvg(Server):
                         lf_scores = self.label_flip_check.score_round(
                             self.global_model, self.uploaded_models, self.ids
                         )
+                    if self.cc == 10:
+                        behavior_scores = self.behavior_label_flip_check.score_round(
+                            self.global_model, self.uploaded_models, self.ids
+                        )
                     a = 0
                     total = max(len(self.index_malicious), 1)
                     for idx in range(len(self.uploaded_models) - 1, -1, -1):
                         client_id = self.ids[idx]
                         sd = self.uploaded_models[idx].state_dict()
-                        if self.cc == 9:
+                        if self.cc in (9, 10):
                             mlp_hit = self.mlp_client_check.is_malicious(sd)
                             bert_hit = self.bert_client_check.is_malicious(sd)
                         else:
@@ -398,8 +427,10 @@ class FedAvg(Server):
                             bert_hit = False
                         val_hit = bool(val_scores.get(client_id, {}).get('reject', False))
                         lf_hit = bool(lf_scores.get(client_id, {}).get('reject', False))
+                        behavior_hit = bool(behavior_scores.get(client_id, {}).get('reject', False))
                         cc9_hit = bool(mlp_hit or (bert_hit and lf_hit)) if self.cc == 9 else False
-                        if mlp_hit or val_hit or cc9_hit:
+                        cc10_hit = bool(mlp_hit or behavior_hit) if self.cc == 10 else False
+                        if mlp_hit or val_hit or cc9_hit or cc10_hit:
                             if client_id in self.index_malicious:
                                 a += 1
                             if self.cc == 8:
@@ -416,6 +447,16 @@ class FedAvg(Server):
                                     f"cos={v.get('final_cos', 0.0):.4f} "
                                     f"class={v.get('worst_class', -1)} "
                                     f"delta={v.get('worst_class_delta', 0.0):.4f}"
+                                )
+                            elif self.cc == 10:
+                                v = behavior_scores.get(client_id, {})
+                                print(
+                                    f"cc=10: removing client {client_id} ({detector_name}) "
+                                    f"bert={bert_hit} mlp={mlp_hit} behavior={behavior_hit} "
+                                    f"class={v.get('worst_class', -1)} "
+                                    f"margin_delta={v.get('margin_delta', 0.0):.4f} "
+                                    f"loss_delta={v.get('loss_delta', 0.0):.4f} "
+                                    f"acc={v.get('accuracy', 0.0):.4f}"
                                 )
                             else:
                                 print(f'cc={self.cc}: removing client {client_id} ({detector_name} detector)')
@@ -445,6 +486,8 @@ class FedAvg(Server):
             if self.cc ==8:
                 FPR, FRR = self.compute_fpr_frr()
             if self.cc ==9:
+                FPR, FRR = self.compute_fpr_frr()
+            if self.cc ==10:
                 FPR, FRR = self.compute_fpr_frr()
             print(f"Round {i}: False Positive Rate = {FPR:.4f}, False Rejection Rate = {FRR:.4f}")
             self.save_fpr_frr_to_csv(i, FPR, FRR)
