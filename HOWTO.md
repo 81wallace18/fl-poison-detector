@@ -112,6 +112,7 @@ RUN_DIR=./detector_runs/monza_cnn_mnist \
 **Aceite**:
 - `adapter_model.safetensors` deve ter ~3 MB (não 593 KB — se for menor, o head não foi salvo, ver bugfix abaixo).
 - `metrics.json` com `default_argmax.f1` ≥ 0.80.
+- `metrics.json` com `default_argmax.by_type` para comparar FPR/recall por tipo de ataque contra o MLP.
 
 #### 2b — Detector MLP (60 features handcrafted)
 
@@ -184,9 +185,19 @@ cd ../..
 .venv/bin/jupyter notebook notebook_monza_analysis.ipynb
 ```
 
-Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, FPR/recall por tipo de ataque e sumário. O notebook carrega `cc=2/3/6/7` quando os CSVs existem e inclui `cc=8` automaticamente depois de gerar `PFLlibMonza/system/fpr_frr_results_8.csv`.
+Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, FPR/recall por tipo de ataque, foco em `label flip`, foco em `cc=6/7/8` e sumário. O notebook carrega `cc=2/3/6/7` quando os CSVs existem e inclui `cc=8` automaticamente depois de gerar `PFLlibMonza/system/fpr_frr_results_8.csv`.
 
 Os PNGs são gerados no diretório raiz como `plot_*.png` ao executar o notebook.
+
+Principais saídas:
+- `plot_fpr_frr_by_round.png`
+- `plot_tradeoff_fpr_frr.png`
+- `plot_detector_metrics.png`
+- `plot_recall_by_attack.png`
+- `plot_detector_attack_table.png`
+- `plot_label_flip_recall.png`
+- `plot_learned_defenses_fpr_frr.png`
+- `plot_summary_fpr_frr.png`
 
 ---
 
