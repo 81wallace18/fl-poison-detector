@@ -184,9 +184,9 @@ cd ../..
 .venv/bin/jupyter notebook notebook_monza_analysis.ipynb
 ```
 
-Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, recall por tipo de ataque e sumário. Runs antigos cobrem 4 defesas (`cc=2/3/6/7`); inclua `cc=8` depois de gerar `fpr_frr_results_8.csv`.
+Gera gráficos comparativos de FPR/FRR por round, trade-off scatter, métricas dos detectores, FPR/recall por tipo de ataque e sumário. O notebook carrega `cc=2/3/6/7` quando os CSVs existem e inclui `cc=8` automaticamente depois de gerar `PFLlibMonza/system/fpr_frr_results_8.csv`.
 
-PNGs estáticos já estão no repo: `plot_*.png`.
+Os PNGs são gerados no diretório raiz como `plot_*.png` ao executar o notebook.
 
 ---
 
@@ -199,7 +199,7 @@ jpt/
 ├── RESULTS.md                   # bench atual: 4×2 grid de variantes
 ├── MONZA_RESULTS.md             # 🆕 resultados experimentais MONZA
 ├── HOWTO.md                     # 🆕 este arquivo
-├── notebook_monza_analysis.ipynb # 🆕 análise gráfica (4 defesas)
+├── notebook_monza_analysis.ipynb # 🆕 análise gráfica (cc=2/3/6/7 + cc=8 opcional)
 ├── BertModelsclassify.ipynb     # gerador local de fallback (não-MONZA)
 ├── plot_*.png                   # 🆕 5 figuras geradas
 ├── src/

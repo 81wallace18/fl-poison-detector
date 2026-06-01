@@ -34,7 +34,7 @@ Documentação:
 - [`MONZA_RESULTS.md`](MONZA_RESULTS.md) — resultados experimentais em FL real
 - [`RESULTS.md`](RESULTS.md) — bench original 4×2 (dataset sintético)
 - [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu (Fases 1-7 + nota `cc=8`)
-- [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das 4 defesas
+- [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das defesas MONZA (`cc=8` opcional)
 
 ## Quick start
 
@@ -58,7 +58,7 @@ O ambiente Python é único: use sempre `.venv/` na raiz. MONZA também deve ser
 ├── HOWTO.md, MONZA_RESULTS.md            # docs da integração FL real (PFLlibMonza)
 ├── requirements.txt, .gitignore
 ├── BertModelsclassify.ipynb              # notebook ad-hoc com flags de geração
-├── notebook_monza_analysis.ipynb         # gráficos comparativos das 4 defesas
+├── notebook_monza_analysis.ipynb         # gráficos comparativos das defesas MONZA
 ├── bench_grid_results.json               # resultados do bench 4×2
 ├── src/
 │   ├── detector.py                       # DistilBERT+LoRA sobre pesos→bins
