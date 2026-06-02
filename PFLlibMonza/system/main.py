@@ -508,8 +508,12 @@ if __name__ == "__main__":
     parser.add_argument('-nmc', "--n_client_malicious", type=int, default=0)
     parser.add_argument('-atk', '--atack', type = str, default='random')
     parser.add_argument('-ria', '--round_init_atk', type = int, default=0)
-    parser.add_argument('-rfake', '--rate_client_fake', type = int, default=1) # de 0 a 1
-    parser.add_argument('-cc', '--cluster_comparation', type = int, default=0) # 0 score com modelo global, 1 score com comparação entre clientes, 2 comparação entre clientes e remove todo o cluster , 3 comparação entre clientes com pontuação, 4 entropia do modelo 5 sem nada 6 detector NLP, 7 detector MLP, 8 MLP+validacao publica, 9 NLP+MLP+label-flip check, 10 NLP+MLP+behavior label-flip
+    parser.add_argument('-rfake', '--rate_client_fake', type = float, default=1.0) # de 0 a 1
+    parser.add_argument('-cc', '--cluster_comparation', type = int, default=0) # 0 score com modelo global, 1 score com comparação entre clientes, 2 comparação entre clientes e remove todo o cluster , 3 comparação entre clientes com pontuação, 4 entropia do modelo, 5 sem nada, 6 detector DistilBERT, 7 detector MLP, 8 MLP+validacao publica, 9 DistilBERT+MLP+label-flip check, 10 DistilBERT+MLP+targeted label-flip
+    parser.add_argument('--label_flip_epochs', type=int, default=5,
+        help='Epocas locais do ataque malicious_label. Afeta apenas clientes maliciosos label-flip.')
+    parser.add_argument('--label_flip_lr_multiplier', type=float, default=1.0,
+        help='Multiplicador de learning rate do ataque malicious_label.')
     parser.add_argument('--dump_state_dicts', type=str, default='',
         help='Se setado, dumpa state_dicts dos clients em cada round nesse diretorio (formato fl_save).')
     parser.add_argument('--detector_dir', type=str, default='',
@@ -537,19 +541,42 @@ if __name__ == "__main__":
     parser.add_argument('--lf_check_max_final_cos', type=float, default=0.0,
         help='Cosseno maximo contra root update da camada final para suspeitar label flip no cc=9.')
     parser.add_argument('--behavior_check_min_margin_delta', type=float, default=0.20,
-        help='Delta minimo da margem para o rotulo invertido usado pelo cc=10.')
+        help='Legado: delta minimo da margem para o rotulo invertido no behavior check antigo.')
     parser.add_argument('--behavior_check_min_loss_delta', type=float, default=-0.05,
-        help='Delta minimo de loss limpo permitido para rejeicao comportamental no cc=10.')
+        help='Legado: delta minimo de loss limpo permitido pelo behavior check antigo.')
     parser.add_argument('--behavior_check_mad_k', type=float, default=3.0,
-        help='Multiplicador MAD para outlier de margem comportamental no cc=10.')
+        help='Legado: multiplicador MAD do behavior check antigo.')
     parser.add_argument('--behavior_check_max_reject_fraction', type=float, default=0.05,
-        help='Fração máxima aproximada de clientes removidos por margem comportamental no cc=10.')
+        help='Legado: fracao maxima aproximada de clientes removidos pelo behavior check antigo.')
     parser.add_argument('--behavior_check_flip_mode', type=str, default='reverse',
         choices=['reverse', 'max_non_true'],
-        help="Modo da margem comportamental no cc=10: 'reverse' usa y->num_classes-1-y; 'max_non_true' testa qualquer classe alvo.")
+        help="Legado: modo da margem comportamental antiga.")
     parser.add_argument('--cc9_lf_standalone', action='store_true',
         help='Permite que o LabelFlipCheck remova no cc=9 mesmo sem hit do BERT.')
+    parser.add_argument('--target_lf_min_score', type=float, default=2.0,
+        help='Score minimo do detector targeted label-flip usado pelo cc=10.')
+    parser.add_argument('--target_lf_min_margin_delta', type=float, default=0.05,
+        help='Delta minimo de margem reversa para rejeicao targeted label-flip no cc=10.')
+    parser.add_argument('--target_lf_min_loss_delta', type=float, default=-0.10,
+        help='Delta minimo de loss limpo permitido pelo targeted label-flip no cc=10.')
+    parser.add_argument('--target_lf_mad_k', type=float, default=2.5,
+        help='Multiplicador MAD para outlier do targeted label-flip no cc=10.')
+    parser.add_argument('--target_lf_max_reject_fraction', type=float, default=0.30,
+        help='Fracao maxima aproximada de clientes removidos pelo targeted label-flip no cc=10.')
+    parser.add_argument('--target_lf_head_weight', type=float, default=0.35,
+        help='Peso do score de delta da camada final no targeted label-flip do cc=10.')
+    parser.add_argument('--target_lf_margin_weight', type=float, default=1.0,
+        help='Peso do delta de margem reversa no targeted label-flip do cc=10.')
+    parser.add_argument('--target_lf_loss_weight', type=float, default=0.50,
+        help='Peso do delta de loss por classe no targeted label-flip do cc=10.')
+    parser.add_argument('--target_lf_target_prob_weight', type=float, default=0.50,
+        help='Peso do delta de probabilidade do alvo invertido no targeted label-flip do cc=10.')
     args = parser.parse_args()
+
+    if not 0.0 <= args.rate_client_fake <= 1.0:
+        raise ValueError("--rate_client_fake/-rfake deve ficar entre 0 e 1.")
+    if not 0.0 <= args.target_lf_max_reject_fraction <= 1.0:
+        raise ValueError("--target_lf_max_reject_fraction deve ficar entre 0 e 1.")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
 

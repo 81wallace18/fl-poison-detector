@@ -1,4 +1,5 @@
 import time
+import uuid
 from flcore.clients.clientavg import clientAVG
 from flcore.servers.serverbase import Server
 from threading import Thread
@@ -9,16 +10,17 @@ import csv
 import os
 from torch.utils.data import DataLoader
 from flcore.detector import fl_save
-from flcore.detector.behavior_check import BehaviorLabelFlipCheck
 from flcore.detector.cc import ClientCheck
 from flcore.detector.cc_mlp import ClientCheckMLP
 from flcore.detector.label_flip_check import LabelFlipCheck
+from flcore.detector.targeted_label_flip_check import TargetedLabelFlipCheck
 from flcore.detector.validation_check import PublicValidationCheck
 from utils.data_utils import read_client_data
 class FedAvg(Server):
     def __init__(self, args, times):
         super().__init__(args, times)
         self.fpr_frr_results = []
+        self.run_id = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
 
         # Open the CSV file in append mode to save results over time
         if self.cc ==3:
@@ -37,28 +39,26 @@ class FedAvg(Server):
             self.csv_filename = 'fpr_frr_results_10.csv'
         else:
             self.csv_filename = 'f.csv'
-        # Write headers if the file is empty (first time writing)
-        if not os.path.exists(self.csv_filename):
-            with open(self.csv_filename, mode='w', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow(['Round', 'FPR', 'FRR'])
+        self._ensure_csv_header(self.csv_filename, ['RunID', 'Round', 'FPR', 'FRR'])
         self.cc_detail_filename = f'cc_detail_results_{self.cc}.csv'
         self.cc_type_filename = f'cc_type_results_{self.cc}.csv'
         if self.cc in (6, 7, 8, 9, 10):
-            if not os.path.exists(self.cc_detail_filename):
-                with open(self.cc_detail_filename, mode='w', newline='') as file:
-                    writer = csv.writer(file)
-                    writer.writerow([
-                        'Round', 'CC', 'ClientID', 'AttackType', 'IsMaliciousRound',
-                        'MaliciousGroup', 'Removed', 'Reason', 'MLPHit', 'BERTHit',
-                        'ValHit', 'LFHit', 'BehaviorHit', 'MLPScore', 'BERTScore',
-                        'ValScore', 'LFCos', 'LFWorstClassDelta',
-                        'BehaviorMarginDelta', 'BehaviorLossDelta',
-                    ])
-            if not os.path.exists(self.cc_type_filename):
-                with open(self.cc_type_filename, mode='w', newline='') as file:
-                    writer = csv.writer(file)
-                    writer.writerow(['Round', 'CC', 'AttackType', 'Total', 'Removed', 'Rate', 'Metric'])
+            detail_header = [
+                'RunID', 'Round', 'CC', 'ClientID', 'AttackType', 'IsMaliciousRound',
+                'MaliciousGroup', 'Removed', 'Reason', 'MLPHit', 'BERTHit',
+                'ValHit', 'LFHit', 'BehaviorHit', 'TargetLFHit', 'MLPScore', 'BERTScore',
+                'ValScore', 'LFCos', 'LFWorstClassDelta',
+                'BehaviorMarginDelta', 'BehaviorLossDelta',
+                'TargetLFScore', 'TargetLFSuspectClass', 'TargetLFTargetClass',
+                'TargetLFMarginDelta', 'TargetLFLossDelta',
+                'TargetLFTargetProbDelta', 'TargetLFHeadScore', 'TargetLFFinalDelta',
+                'TargetLFScoreOutlier', 'TargetLFBehaviorAllowed', 'TargetLFCapped',
+            ]
+            self._ensure_csv_header(self.cc_detail_filename, detail_header)
+            self._ensure_csv_header(
+                self.cc_type_filename,
+                ['RunID', 'Round', 'CC', 'AttackType', 'Total', 'Removed', 'Rate', 'Metric'],
+            )
 
         self.dump_dir = getattr(args, 'dump_state_dicts', '') or ''
         self.client_check = None
@@ -69,7 +69,7 @@ class FedAvg(Server):
             detector_dir = getattr(args, 'detector_dir', '') or ''
             if not detector_dir:
                 raise ValueError("cc=6 requer --detector_dir apontando pro modelo treinado (ex: jpt/detector_final/).")
-            print(f"[cc=6] Carregando detector NLP de {detector_dir}")
+            print(f"[cc=6] Carregando detector DistilBERT de {detector_dir}")
             self.client_check = ClientCheck(detector_dir)
         elif self.cc == 7:
             detector_dir = getattr(args, 'detector_dir', '') or ''
@@ -92,7 +92,7 @@ class FedAvg(Server):
             if not bert_detector_dir:
                 raise ValueError("cc=9 requer --bert_detector_dir apontando pro modelo DistilBERT treinado.")
             print(f"[cc=9] Carregando detector MLP de {mlp_detector_dir}")
-            print(f"[cc=9] Carregando detector NLP de {bert_detector_dir}")
+            print(f"[cc=9] Carregando detector DistilBERT de {bert_detector_dir}")
             self.mlp_client_check = ClientCheckMLP(mlp_detector_dir)
             self.bert_client_check = ClientCheck(bert_detector_dir)
             self.label_flip_check = None
@@ -104,10 +104,9 @@ class FedAvg(Server):
             if not bert_detector_dir:
                 raise ValueError("cc=10 requer --bert_detector_dir apontando pro modelo DistilBERT treinado.")
             print(f"[cc=10] Carregando detector MLP de {mlp_detector_dir}")
-            print(f"[cc=10] Carregando detector NLP de {bert_detector_dir}")
+            print(f"[cc=10] Carregando detector DistilBERT de {bert_detector_dir}")
             self.mlp_client_check = ClientCheckMLP(mlp_detector_dir)
             self.bert_client_check = ClientCheck(bert_detector_dir)
-            self.behavior_label_flip_check = None
 
         # select slow clients
         self.set_slow_clients()
@@ -130,21 +129,38 @@ class FedAvg(Server):
                 max_final_cos=getattr(args, 'lf_check_max_final_cos', 0.0),
             )
         if self.cc == 10:
-            self.behavior_label_flip_check = BehaviorLabelFlipCheck(
+            self.targeted_label_flip_check = TargetedLabelFlipCheck(
                 self._build_public_validation_loader(label='cc=10'),
                 self.device,
                 num_classes=getattr(args, 'num_classes', 10),
-                min_margin_delta=getattr(args, 'behavior_check_min_margin_delta', 0.20),
-                min_loss_delta=getattr(args, 'behavior_check_min_loss_delta', -0.05),
-                mad_k=getattr(args, 'behavior_check_mad_k', 3.0),
-                max_reject_fraction=getattr(args, 'behavior_check_max_reject_fraction', 0.05),
-                flip_mode=getattr(args, 'behavior_check_flip_mode', 'reverse'),
+                min_score=getattr(args, 'target_lf_min_score', 2.0),
+                min_margin_delta=getattr(args, 'target_lf_min_margin_delta', 0.05),
+                min_loss_delta=getattr(args, 'target_lf_min_loss_delta', -0.10),
+                mad_k=getattr(args, 'target_lf_mad_k', 2.5),
+                max_reject_fraction=getattr(args, 'target_lf_max_reject_fraction', 0.30),
+                head_weight=getattr(args, 'target_lf_head_weight', 0.35),
+                margin_weight=getattr(args, 'target_lf_margin_weight', 1.0),
+                loss_weight=getattr(args, 'target_lf_loss_weight', 0.50),
+                target_prob_weight=getattr(args, 'target_lf_target_prob_weight', 0.50),
             )
 
         print(f"\nJoin ratio / total clients: {self.join_ratio} / {self.num_clients}")
         print("Finished creating server and clients.")
 
         # self.load_model()
+
+    def _ensure_csv_header(self, filename, header):
+        if os.path.exists(filename):
+            with open(filename, newline='') as file:
+                current_header = next(csv.reader(file), [])
+            if current_header != header:
+                legacy_name = f"{filename}.legacy_{self.run_id}"
+                os.rename(filename, legacy_name)
+                print(f"[cc={self.cc}] Arquivando CSV com header antigo: {legacy_name}")
+        if not os.path.exists(filename):
+            with open(filename, mode='w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(header)
 
     def _build_public_validation_loader(self, label='cc=8'):
         target = int(getattr(self.args, 'val_check_samples', 256))
@@ -196,7 +212,7 @@ class FedAvg(Server):
         """
         with open(self.csv_filename, mode='a', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow([round_number, FPR, FRR])
+            writer.writerow([self.run_id, round_number, FPR, FRR])
 
     def save_cc_detail_to_csv(self, rows):
         if not rows:
@@ -205,14 +221,42 @@ class FedAvg(Server):
             writer = csv.writer(file)
             for row in rows:
                 writer.writerow([
-                    row['round'], row['cc'], row['client_id'], row['attack_type'],
+                    self.run_id, row['round'], row['cc'], row['client_id'], row['attack_type'],
                     int(row['is_malicious_round']), int(row['malicious_group']),
                     int(row['removed']), row['reason'], int(row['mlp_hit']),
                     int(row['bert_hit']), int(row['val_hit']), int(row['lf_hit']),
-                    int(row['behavior_hit']), row['mlp_score'], row['bert_score'],
+                    int(row['behavior_hit']), int(row['target_lf_hit']), row['mlp_score'], row['bert_score'],
                     row['val_score'], row['lf_cos'], row['lf_worst_class_delta'],
                     row['behavior_margin_delta'], row['behavior_loss_delta'],
+                    row['target_lf_score'], row['target_lf_suspect_class'],
+                    row['target_lf_target_class'], row['target_lf_margin_delta'],
+                    row['target_lf_loss_delta'], row['target_lf_target_prob_delta'],
+                    row['target_lf_head_score'], row['target_lf_final_delta'],
+                    int(row['target_lf_score_outlier']), int(row['target_lf_behavior_allowed']),
+                    int(row['target_lf_capped']),
                 ])
+
+    def _final_layer_delta(self, client_model):
+        global_sd = self.global_model.state_dict()
+        client_sd = client_model.state_dict()
+        final_key = None
+        for key in ('head.weight', 'fc.weight', 'base.fc.weight'):
+            if key in global_sd and key in client_sd:
+                final_key = key
+                break
+        if final_key is None:
+            candidates = [
+                key for key in global_sd
+                if key in client_sd and (key.endswith('fc.weight') or key.endswith('head.weight'))
+            ]
+            if not candidates:
+                return 0.0
+            final_key = candidates[-1]
+        delta = torch.linalg.norm((client_sd[final_key].detach() - global_sd[final_key].detach()).float())
+        bias_key = final_key[:-len('weight')] + 'bias'
+        if bias_key in global_sd and bias_key in client_sd:
+            delta = delta + torch.linalg.norm((client_sd[bias_key].detach() - global_sd[bias_key].detach()).float())
+        return float(delta.item())
 
     def save_cc_type_to_csv(self, round_number, rows):
         if not rows:
@@ -231,7 +275,7 @@ class FedAvg(Server):
                 removed = bucket['removed']
                 rate = removed / total if total else 0.0
                 metric = 'FPR' if attack_type == 'benign' else 'recall'
-                writer.writerow([round_number, self.cc, attack_type, total, removed, rate, metric])
+                writer.writerow([self.run_id, round_number, self.cc, attack_type, total, removed, rate, metric])
 
     def normalize_entropies(self, client_entropies):
         """Normaliza as entropias para que fiquem no intervalo [0, 1]"""
@@ -327,6 +371,10 @@ class FedAvg(Server):
         
         for i in range(self.global_rounds+1):
             s_t = time.time()
+            quarantined_at_round_start = {
+                client_id for client_id, status in self.client_quarantine_dict.items()
+                if status['roundsQuarent'] > 0
+            }
             self.selected_clients = self.select_clients()
             self.send_models()
             self.removed_clients = []
@@ -335,11 +383,10 @@ class FedAvg(Server):
                 print(f"\n-------------Round number: {i}-------------")
                 print("\nEvaluate global model")
                 self.evaluate()
-            for j in range(self.num_clients):
-                self.decrease_quarentine(j)
-
             #for client in self.selected_clients:
             #    client.train()
+            for client in self.selected_clients:
+                client.current_round = self.current_round
 
             threads = [Thread(target=client.train)
                        for client in self.selected_clients]
@@ -358,7 +405,7 @@ class FedAvg(Server):
                 )
                 print(f'[dump] round {i}: salvos {n_saved} state_dicts em {self.dump_dir}')
 
-            if i>0:
+            if i > 0 and self.uploaded_models:
                 #comparar com o modelo
                 if self.cc==0:
                     global_model_params = list(self.global_model.parameters()) 
@@ -375,71 +422,83 @@ class FedAvg(Server):
                 #comparar com todos os modelos e fazer cluster
                 if self.cc==2:
                     oi = time.time()
-                    similarity_matrix, a = self.calculate_similarity_scores()
+                    if len(self.uploaded_models) < 2:
+                        print("cc=2: menos de 2 uploads validos; pulando clustering neste round.")
+                    else:
+                        similarity_matrix, a = self.calculate_similarity_scores()
 
-                    # Realizar a clusterização
-                    num_clusters = 2  # Defina o número de clusters conforme necessário
-                    clusters = self.perform_clustering(similarity_matrix, num_clusters)
-                    #for idx, cluster in enumerate(clusters):
-                        #print(f"Client {self.ids[idx]} is in cluster {cluster}")
+                        # Realizar a clusterização
+                        num_clusters = min(2, len(self.uploaded_models))  # Defina o número de clusters conforme necessário
+                        clusters = self.perform_clustering(similarity_matrix, num_clusters)
+                        #for idx, cluster in enumerate(clusters):
+                            #print(f"Client {self.ids[idx]} is in cluster {cluster}")
 
-                    self.cluster_tuples = [(self.ids[idx], cluster) for idx, cluster in enumerate(clusters)]
-                    for idx, cluster in enumerate(clusters):
-                        print(f"Client {self.ids[idx]} is in cluster {cluster}")
-                    cluster_counts = Counter([cluster for _, cluster in self.cluster_tuples])
-                    min_cluster = min(cluster_counts, key=cluster_counts.get)
+                        self.cluster_tuples = [(self.ids[idx], cluster) for idx, cluster in enumerate(clusters)]
+                        for idx, cluster in enumerate(clusters):
+                            print(f"Client {self.ids[idx]} is in cluster {cluster}")
+                        cluster_counts = Counter([cluster for _, cluster in self.cluster_tuples])
+                        min_cluster = min(cluster_counts, key=cluster_counts.get)
 
-                    for idx in range(len(self.cluster_tuples) - 1, -1, -1):
-                        client_id, cluster = self.cluster_tuples[idx]
-                        #print(self.ids)
-                        if cluster == min_cluster:
-                            print(f"Removing client {client_id} from cluster {cluster}")
-                            self.removed_clients.append(client_id)
-                            # Remover o cliente das listas associadas
-                            del self.uploaded_models[idx]
-                            del self.ids[idx]
-                            del self.uploaded_ids[idx]
-                            del self.uploaded_weights[idx]
+                        for idx in range(len(self.cluster_tuples) - 1, -1, -1):
+                            client_id, cluster = self.cluster_tuples[idx]
                             #print(self.ids)
-                    self.uploaded_weights = [weight / sum(self.uploaded_weights) for weight in self.uploaded_weights]
+                            if cluster == min_cluster:
+                                print(f"Removing client {client_id} from cluster {cluster}")
+                                self.removed_clients.append(client_id)
+                                # Remover o cliente das listas associadas
+                                del self.uploaded_models[idx]
+                                del self.ids[idx]
+                                del self.uploaded_ids[idx]
+                                del self.uploaded_weights[idx]
+                                #print(self.ids)
+                        if self.uploaded_weights:
+                            s = sum(self.uploaded_weights)
+                            if s > 0:
+                                self.uploaded_weights = [weight / s for weight in self.uploaded_weights]
                     bye = time.time()
                     vish = bye- oi  # Calcula o tempo decorrido
                     print(f"Tempo de execução: {vish:.4f} segundos")
                 #metodo do cosseno mas com score
                 if self.cc==3:
                     oi = time.time()
-                    similarity_matrix, client_scores  = self.calculate_similarity_scores()
-                    # Converte os scores para array e calcula a média
-                    scores_array = np.array(list(client_scores.values()))
-                    mean_score = np.mean(scores_array)
-                    std_score = np.std(scores_array)
-                    print(f"Average score: {mean_score:.4f}")
-                    mean_score = mean_score - std_score
-                    print(f"Average score: {mean_score:.4f}")
-                    # Cria uma lista de tuplas para manter a posição dos clientes
-                    client_tuples = [(self.ids[idx], client_scores[self.ids[idx]]) for idx in range(len(self.ids))]
-                    total = len(self.index_malicious)
-                    a = 0
-                    # Itera de trás para frente para remover clientes abaixo da média
-                    if std_score<0.001:
-                        print("nenhum malicioso")
+                    if len(self.uploaded_models) < 2:
+                        print("cc=3: menos de 2 uploads validos; pulando score neste round.")
                     else:
-                        for idx in range(len(client_tuples) - 1, -1, -1):
-                            client_id, score = client_tuples[idx]
-                            print(f"Esse  {client_id} with score {score:.4f} ")
-                            if score < mean_score:
-                                if client_id in self.index_malicious:
-                                    a = a+1
-                                print(f"Removing client {client_id} with score {score:.4f} (below average)")
-                                self.set_client_quarantine(client_id)
-                                # Remover o cliente das listas associadas
-                                del self.uploaded_models[idx]
-                                del self.ids[idx]
-                                del self.uploaded_ids[idx]
-                                del self.uploaded_weights[idx]
-                    a = (a/total) *100
-                    print("porcentagem de clientes maliciosos de verdade achados: "+ str(a) + "%")
-                    self.uploaded_weights = [weight / sum(self.uploaded_weights) for weight in self.uploaded_weights]
+                        similarity_matrix, client_scores  = self.calculate_similarity_scores()
+                        # Converte os scores para array e calcula a média
+                        scores_array = np.array(list(client_scores.values()))
+                        mean_score = np.mean(scores_array)
+                        std_score = np.std(scores_array)
+                        print(f"Average score: {mean_score:.4f}")
+                        mean_score = mean_score - std_score
+                        print(f"Average score: {mean_score:.4f}")
+                        # Cria uma lista de tuplas para manter a posição dos clientes
+                        client_tuples = [(self.ids[idx], client_scores[self.ids[idx]]) for idx in range(len(self.ids))]
+                        total = len(self.index_malicious)
+                        a = 0
+                        # Itera de trás para frente para remover clientes abaixo da média
+                        if std_score<0.001:
+                            print("nenhum malicioso")
+                        else:
+                            for idx in range(len(client_tuples) - 1, -1, -1):
+                                client_id, score = client_tuples[idx]
+                                print(f"Esse  {client_id} with score {score:.4f} ")
+                                if score < mean_score:
+                                    if client_id in self.index_malicious:
+                                        a = a+1
+                                    print(f"Removing client {client_id} with score {score:.4f} (below average)")
+                                    self.set_client_quarantine(client_id)
+                                    # Remover o cliente das listas associadas
+                                    del self.uploaded_models[idx]
+                                    del self.ids[idx]
+                                    del self.uploaded_ids[idx]
+                                    del self.uploaded_weights[idx]
+                        a = (a/total) *100 if total > 0 else 0.0
+                        print("porcentagem de clientes maliciosos de verdade achados: "+ str(a) + "%")
+                        if self.uploaded_weights:
+                            s = sum(self.uploaded_weights)
+                            if s > 0:
+                                self.uploaded_weights = [weight / s for weight in self.uploaded_weights]
                     bye = time.time()
                     vish = bye - oi  # Calcula o tempo decorrido
                     print(f"Tempo de execução: {vish:.4f} segundos")
@@ -472,6 +531,10 @@ class FedAvg(Server):
                             del self.uploaded_ids[idx]
                             del self.uploaded_weights[idx]
                     #normalized_client_entropies = self.normalize_entropies(client_entropies)
+                    if self.uploaded_weights:
+                        s = sum(self.uploaded_weights)
+                        if s > 0:
+                            self.uploaded_weights = [w / s for w in self.uploaded_weights]
                     bye = time.time()
                     vish = bye - oi  # Calcula o tempo decorrido
                     print(f"Tempo de execução: {vish:.4f} segundos")
@@ -479,10 +542,22 @@ class FedAvg(Server):
                     print("vai rolar nada")
                 if self.cc in (6, 7, 8, 9, 10):
                     oi = time.time()
-                    detector_name = 'NLP' if self.cc == 6 else ('MLP' if self.cc == 7 else ('MLP+VAL' if self.cc == 8 else ('NLP+MLP+LF' if self.cc == 9 else 'NLP+MLP+BEHAVIOR')))
+                    detector_name = (
+                        'DistilBERT' if self.cc == 6 else (
+                            'MLP' if self.cc == 7 else (
+                                'MLP+VAL' if self.cc == 8 else (
+                                    'DistilBERT+MLP+LF' if self.cc == 9 else (
+                                        'DistilBERT+MLP+TARGET-LF' if self.cc == 10
+                                        else 'DistilBERT+MLP+UNKNOWN'
+                                    )
+                                )
+                            )
+                        )
+                    )
                     val_scores = {}
                     lf_scores = {}
                     behavior_scores = {}
+                    target_lf_scores = {}
                     clients_by_id = {c.id: c for c in self.clients}
                     if self.cc == 8:
                         val_scores = self.public_val_check.score_round(
@@ -493,17 +568,19 @@ class FedAvg(Server):
                             self.global_model, self.uploaded_models, self.ids
                         )
                     if self.cc == 10:
-                        behavior_scores = self.behavior_label_flip_check.score_round(
+                        target_lf_scores = self.targeted_label_flip_check.score_round(
                             self.global_model, self.uploaded_models, self.ids
                         )
-                    a = 0
-                    total = max(len(self.index_malicious), 1)
+                    true_positive_uploads = 0
+                    malicious_uploads = 0
                     detail_rows = []
                     for idx in range(len(self.uploaded_models) - 1, -1, -1):
                         client_id = self.ids[idx]
                         client = clients_by_id.get(client_id)
                         attack_type = getattr(client, 'last_attack_type', 'unknown')
                         is_malicious_round = bool(getattr(client, 'is_malicious', False))
+                        if is_malicious_round:
+                            malicious_uploads += 1
                         sd = self.uploaded_models[idx].state_dict()
                         mlp_result = {'is_malicious': False, 'score': 0.0}
                         bert_result = {'is_malicious': False, 'score': 0.0}
@@ -523,10 +600,11 @@ class FedAvg(Server):
                         val_hit = bool(val_scores.get(client_id, {}).get('reject', False))
                         lf_hit = bool(lf_scores.get(client_id, {}).get('reject', False))
                         behavior_hit = bool(behavior_scores.get(client_id, {}).get('reject', False))
+                        target_lf_hit = bool(target_lf_scores.get(client_id, {}).get('reject', False))
                         cc9_hit = bool(
                             mlp_hit or (bert_hit and lf_hit) or (self.cc9_lf_standalone and lf_hit)
                         ) if self.cc == 9 else False
-                        cc10_hit = bool(mlp_hit or behavior_hit) if self.cc == 10 else False
+                        cc10_hit = bool(bert_hit or mlp_hit or target_lf_hit) if self.cc == 10 else False
                         removed = bool(
                             (self.cc == 6 and bert_hit)
                             or (self.cc == 7 and mlp_hit)
@@ -545,10 +623,13 @@ class FedAvg(Server):
                             reason_parts.append('lf')
                         if behavior_hit:
                             reason_parts.append('behavior')
+                        if target_lf_hit:
+                            reason_parts.append('target_lf')
                         reason = '+'.join(reason_parts) if reason_parts else 'none'
                         v_val = val_scores.get(client_id, {})
                         v_lf = lf_scores.get(client_id, {})
                         v_behavior = behavior_scores.get(client_id, {})
+                        v_target_lf = target_lf_scores.get(client_id, {})
                         detail_rows.append({
                             'round': i,
                             'cc': self.cc,
@@ -563,6 +644,7 @@ class FedAvg(Server):
                             'val_hit': val_hit,
                             'lf_hit': lf_hit,
                             'behavior_hit': behavior_hit,
+                            'target_lf_hit': target_lf_hit,
                             'mlp_score': float(mlp_result.get('score', 0.0)),
                             'bert_score': float(bert_result.get('score', 0.0)),
                             'val_score': float(v_val.get('score', 0.0)),
@@ -570,10 +652,21 @@ class FedAvg(Server):
                             'lf_worst_class_delta': float(v_lf.get('worst_class_delta', 0.0)),
                             'behavior_margin_delta': float(v_behavior.get('margin_delta', 0.0)),
                             'behavior_loss_delta': float(v_behavior.get('loss_delta', 0.0)),
+                            'target_lf_score': float(v_target_lf.get('score', 0.0)),
+                            'target_lf_suspect_class': int(v_target_lf.get('suspect_class', -1)),
+                            'target_lf_target_class': int(v_target_lf.get('target_class', -1)),
+                            'target_lf_margin_delta': float(v_target_lf.get('margin_delta', 0.0)),
+                            'target_lf_loss_delta': float(v_target_lf.get('loss_delta', 0.0)),
+                            'target_lf_target_prob_delta': float(v_target_lf.get('target_prob_delta', 0.0)),
+                            'target_lf_head_score': float(v_target_lf.get('head_score', 0.0)),
+                            'target_lf_final_delta': self._final_layer_delta(self.uploaded_models[idx]),
+                            'target_lf_score_outlier': bool(v_target_lf.get('score_outlier', False)),
+                            'target_lf_behavior_allowed': bool(v_target_lf.get('behavior_allowed', False)),
+                            'target_lf_capped': bool(v_target_lf.get('capped_by_max_reject_fraction', False)),
                         })
                         if removed:
-                            if client_id in self.index_malicious:
-                                a += 1
+                            if is_malicious_round:
+                                true_positive_uploads += 1
                             if self.cc == 8:
                                 print(
                                     f"cc=8: removing client {client_id} ({detector_name}) "
@@ -590,11 +683,13 @@ class FedAvg(Server):
                             elif self.cc == 10:
                                 print(
                                     f"cc=10: removing client {client_id} ({detector_name}) "
-                                    f"bert={bert_hit} mlp={mlp_hit} behavior={behavior_hit} "
-                                    f"class={v_behavior.get('worst_class', -1)} "
-                                    f"margin_delta={v_behavior.get('margin_delta', 0.0):.4f} "
-                                    f"loss_delta={v_behavior.get('loss_delta', 0.0):.4f} "
-                                    f"acc={v_behavior.get('accuracy', 0.0):.4f}"
+                                    f"distilbert={bert_hit} mlp={mlp_hit} target_lf={target_lf_hit} "
+                                    f"score={v_target_lf.get('score', 0.0):.4f} "
+                                    f"class={v_target_lf.get('suspect_class', -1)}"
+                                    f"->{v_target_lf.get('target_class', -1)} "
+                                    f"margin_delta={v_target_lf.get('margin_delta', 0.0):.4f} "
+                                    f"loss_delta={v_target_lf.get('loss_delta', 0.0):.4f} "
+                                    f"head={v_target_lf.get('head_score', 0.0):.4f}"
                                 )
                             else:
                                 print(f'cc={self.cc}: removing client {client_id} ({detector_name} detector)')
@@ -605,8 +700,11 @@ class FedAvg(Server):
                             del self.uploaded_weights[idx]
                     self.save_cc_detail_to_csv(detail_rows)
                     self.save_cc_type_to_csv(i, detail_rows)
-                    a = (a / total) * 100
-                    print(f'porcentagem de maliciosos verdadeiros achados (cc={self.cc}): {a:.2f}%')
+                    round_recall = true_positive_uploads / malicious_uploads if malicious_uploads > 0 else 0.0
+                    print(
+                        f'recall de uploads maliciosos no round (cc={self.cc}): '
+                        f'{round_recall:.2%} ({true_positive_uploads}/{malicious_uploads})'
+                    )
                     if self.uploaded_weights:
                         s = sum(self.uploaded_weights)
                         if s > 0:
@@ -631,6 +729,8 @@ class FedAvg(Server):
                 FPR, FRR = self.compute_fpr_frr()
             print(f"Round {i}: False Positive Rate = {FPR:.4f}, False Rejection Rate = {FRR:.4f}")
             self.save_fpr_frr_to_csv(i, FPR, FRR)
+            for client_id in quarantined_at_round_start:
+                self.decrease_quarentine(client_id)
             if self.dlg_eval and i%self.dlg_gap == 0:
                 self.call_dlg(i)
             self.aggregate_parameters()
