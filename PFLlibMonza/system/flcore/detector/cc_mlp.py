@@ -28,7 +28,7 @@ _THIS_DIR = Path(__file__).resolve().parent
 if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
-from features import N_FEATURES, extract_features  # noqa: E402
+from features import N_FEATURES, extract_features, feature_names  # noqa: E402
 
 
 class _MLPDetector(nn.Module):
@@ -76,6 +76,18 @@ class ClientCheckMLP:
 
         self.scaler = joblib.load(self.artifacts_dir / 'scaler.pkl')
         self.feature_names: List[str] = ckpt.get('feature_names', [])
+        current_feature_names = feature_names()
+        if self.feature_names and self.feature_names != current_feature_names:
+            raise ValueError(
+                f"Feature names do MLP incompatíveis com {self.artifacts_dir}. "
+                "Retreine o detector MLP com a versão atual de features.py."
+            )
+        self.threshold = 0.0
+        report_path = self.artifacts_dir / 'report.json'
+        if report_path.exists():
+            with open(report_path) as f:
+                report = json.load(f)
+            self.threshold = float(report.get('tuned', {}).get('threshold', 0.0))
 
     @torch.no_grad()
     def classify(self, state_dict: Mapping[str, torch.Tensor]) -> Dict:
@@ -87,13 +99,15 @@ class ClientCheckMLP:
         logits = self.model(x)[0]
         logit_ben = float(logits[0].item())
         logit_mal = float(logits[1].item())
-        is_mal = logit_mal > logit_ben
+        score = logit_mal - logit_ben
+        is_mal = score > self.threshold
         return {
             'label': int(is_mal),
             'is_malicious': bool(is_mal),
             'logit_ben': logit_ben,
             'logit_mal': logit_mal,
-            'score': logit_mal - logit_ben,
+            'score': score,
+            'threshold': self.threshold,
         }
 
     def is_malicious(self, state_dict: Mapping[str, torch.Tensor]) -> bool:

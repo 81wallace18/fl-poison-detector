@@ -164,8 +164,8 @@ def extract_features(state_dict, device: torch.device | None = None) -> Tuple[np
         W = state_dict[key].detach().to(device=device, dtype=torch.float32)
         feats.append(_layer_feats(W))
     out = np.concatenate(feats)
-    # Sanitiza: alguns ataques degenerados (e.g. model_zeros que vira ones no
-    # MONZA) podem produzir inf/NaN em features como sv_i/fro ou fft_hf/lf.
+    # Sanitiza: ataques degenerados (e.g. model_zeros) podem produzir inf/NaN
+    # em features como sv_i/fro ou fft_hf/lf.
     # Substituir por 0 preserva o sinal — distribuicoes degeneradas sao em si
     # uma assinatura, e o BatchNorm + scaler do detector lidam bem com zeros.
     out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)

@@ -1,8 +1,8 @@
 """Treino e avaliacao do detector MLP de updates maliciosos em FL.
 
 Pipeline:
-  state_dicts/*.safetensors  ->  features.extract_features (52 dims)
-  -> StandardScaler          ->  MLPDetector (52->128->64->2)
+  state_dicts/*.safetensors  ->  features.extract_features (60 dims)
+  -> StandardScaler          ->  MLPDetector (60->128->64->2)
   -> early stopping em F1    ->  artefatos em detector_mlp_artifacts/
 
 Saida inclui breakdown de recall por tipo de ataque (benign + 4 maliciosos).
@@ -121,6 +121,27 @@ def evaluate(model: nn.Module, X: torch.Tensor, y: torch.Tensor) -> Dict[str, fl
     }
 
 
+def tune_threshold(logits: np.ndarray, labels: np.ndarray) -> Dict[str, float | List[int]]:
+    scores = logits[:, 1] - logits[:, 0]
+    thresholds = np.linspace(float(scores.min()), float(scores.max()), 200)
+    best = None
+    for threshold in thresholds:
+        preds = (scores > threshold).astype(np.int64)
+        f1 = f1_score(labels, preds, zero_division=0)
+        item = {
+            'threshold': float(threshold),
+            'accuracy': float(accuracy_score(labels, preds)),
+            'precision': float(precision_score(labels, preds, zero_division=0)),
+            'recall': float(recall_score(labels, preds, zero_division=0)),
+            'f1': float(f1),
+            'preds': preds.tolist(),
+        }
+        if best is None or item['f1'] > best['f1']:
+            best = item
+    assert best is not None
+    return best
+
+
 def breakdown_by_type(preds: np.ndarray, types_eval: List[str]) -> Dict[str, Dict[str, int]]:
     out: Dict[str, Dict[str, int]] = {}
     for t, p in zip(types_eval, preds):
@@ -223,11 +244,18 @@ def main() -> None:
     print('[4/4] Avaliacao final + breakdown por tipo de ataque')
     final = evaluate(model, Xt_eval_dev, yt_eval_dev)
     preds = np.array(final['preds'])
+    with torch.no_grad():
+        logits_eval = model(Xt_eval_dev).detach().cpu().numpy()
+    tuned = tune_threshold(logits_eval, y_eval)
     print('\n--- Metricas binarias ---')
     print(f"  accuracy : {final['accuracy']:.4f}")
     print(f"  precision: {final['precision']:.4f}")
     print(f"  recall   : {final['recall']:.4f}")
     print(f"  f1       : {final['f1']:.4f}")
+    print(
+        f"  threshold: {tuned['threshold']:.4f} "
+        f"| tuned_f1={tuned['f1']:.4f} tuned_prec={tuned['precision']:.4f} tuned_rec={tuned['recall']:.4f}"
+    )
     print('\n--- classification_report ---')
     report_text = classification_report(
         yt_eval.numpy(), preds, target_names=['benign', 'malicious'], zero_division=0
@@ -236,6 +264,7 @@ def main() -> None:
 
     print('--- Breakdown por tipo de ataque ---')
     by_type = breakdown_by_type(preds, types_eval)
+    by_type_tuned = breakdown_by_type(np.array(tuned['preds']), types_eval)
     for t in sorted(by_type):
         b = by_type[t]
         ratio = b['predicted_malicious'] / b['total']
@@ -260,6 +289,15 @@ def main() -> None:
     report = {
         'best_epoch': best_epoch,
         'metrics': {k: final[k] for k in ('accuracy', 'precision', 'recall', 'f1')},
+        'tuned': {
+            'threshold': tuned['threshold'],
+            'accuracy': tuned['accuracy'],
+            'precision': tuned['precision'],
+            'recall': tuned['recall'],
+            'f1': tuned['f1'],
+            'by_type': by_type_tuned,
+            'note': 'threshold tuned on eval set (in-sample, optimistic)',
+        },
         'by_type': by_type,
         'config': {
             'seed': SEED,
