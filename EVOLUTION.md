@@ -129,7 +129,7 @@ Integramos com [`PFLlibMonza`](https://github.com/VeigarGit/PFLlibMonza) — for
 1. MONZA roda FL real com 100 clientes Dirichlet non-IID (alpha=0.1) sobre MNIST, 30 maliciosos atacando todo round, 50 rounds. Cada update é dumpado.
 2. `detector.py` e `detector_mlp.py` treinam sobre esse dataset (5100 amostras).
 3. Detector treinado é carregado de volta no servidor MONZA num novo `cc==6` (NLP) e `cc==7` (MLP), filtrando clientes maliciosos antes de `aggregate_parameters()`.
-4. Pós-Fase 7, foram adicionados `cc==8` (MLP+validação pública), `cc==9` (BERT+MLP+label-flip check) e `cc==10` (BERT+MLP+comportamento label-flip). Ainda precisam run experimental fechado depois de regenerar `train_mal/`.
+4. Pós-Fase 7, foram adicionados `cc==8` (MLP+validação pública), `cc==9` (DistilBERT+MLP+label-flip check) e `cc==10` (DistilBERT+MLP+targeted label-flip com delta global-cliente). `cc==10` é o experimento focado em melhorar `malicious_label`.
 
 ### Achados
 
@@ -158,7 +158,7 @@ Bate com a banda esperada do bench Fase 5 (DistilBERT plateia em ~0.88, MLP ~0.9
 
 **1. Distribution shift treino → produção é menor pro MLP que pro NLP.** O MLP eval F1=0.85 traduz pra FPR=0%/FRR=15.6% em produção. O NLP eval F1=0.83 *mas* em produção tem FPR=11% — tem 8× mais falsos positivos por round. Hipótese: features handcrafted (SVD, FFT, momentos) capturam invariantes estatísticos *de uma distribuição de pesos plausível*; tokens-de-bins do DistilBERT memoriza muito mais a distribuição empírica do training set, que diverge dos pesos novos a cada round.
 
-**2. Label flip exige sinal de comportamento e rerun com `train_mal/` correto.** Os detectores por fingerprint (DistilBERT vs MLP+features SVD/FFT) chegaram a ~5% recall em label flip no run histórico, mas depois encontramos bug em `utils/data_utils.py`: clientes maliciosos de label flip liam `test/` em vez de `train_mal/`. Então o número antigo é só histórico. A hipótese técnica permanece: label flip pode manter pesos estatisticamente parecidos com benign, mas otimiza função errada. Detecção precisa outro paradigma — validation hold-out, margem para rótulo invertido, gradient-based, ou comparação cross-round. `cc=8/9/10` são as hipóteses implementadas para esse rerun.
+**2. Label flip exige sinal de comportamento e rerun com `train_mal/` correto.** Os detectores por fingerprint (DistilBERT vs MLP+features SVD/FFT) chegaram a ~5% recall em label flip no run histórico, mas depois encontramos bug em `utils/data_utils.py`: clientes maliciosos de label flip liam `test/` em vez de `train_mal/`. Então o número antigo é só histórico. A hipótese técnica permanece: label flip pode manter pesos estatisticamente parecidos com benign, mas otimiza função errada. Detecção precisa outro paradigma — validation hold-out, margem para rótulo invertido, gradient-based, ou comparação cross-round. `cc=10` adiciona um score direcionado para reverse label flip usando holdout limpo e delta da camada final contra o modelo global.
 
 **3. Defesa não precisa pegar 100% — só baixar a fração de poison abaixo do threshold de tolerância do FedAvg.** No `cc=5` (sem defesa, gerou o dataset), modelo nunca convergiu (best acc 0.12 com 30% poison todo round). Com cc=7 filtrando, fração de poison cai pra ~7%, e MNIST/FedAvgCNN converge sem problema. *Lição prática*: F1 do detector não é a métrica final — FPR e FRR em produção, e como elas interagem com o algoritmo de agregação, é o que importa.
 
@@ -169,7 +169,7 @@ Bate com a banda esperada do bench Fase 5 (DistilBERT plateia em ~0.88, MLP ~0.9
 ### Caveats herdados e novos
 
 - Eval in-sample (otimista) — caveat herdado da Fase 5.
-- `model_zeros` no MONZA usa `torch.ones`, não `torch.zeros` (`attack.py:14`) — detector aprendeu a categoria errada. Se outro fork corrigir, esse recall específico cai.
+- Histórico: `model_zeros` no MONZA usava `torch.ones`, não `torch.zeros` (`attack.py:14`) — detector aprendeu a categoria errada. O pipeline atual zera de verdade; essa categoria precisa de novo dump e retreino antes de comparar.
 - `model_noise` bugado no MONZA (`attack.py:52` early return) — `-atk all` cobre 4 categorias, não 5.
 - Single seed (42) — sem CI nos números.
 - VGG/Cifar10 cortado por disco — sem evidência de generalização além de FedAvgCNN/MNIST.
@@ -185,7 +185,7 @@ Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`noteboo
 - **Contrastive learning** entre rounds consecutivos — pega ataques on-off (cliente honesto por X rondas, ataca em Y).
 - **Anchor-based defenses** com modelo pré-treinado público como referência.
 - **Ensemble cc=2 + cc=7** — cluster filtra grosseiros, MLP filtra residuais. Pode ter FPR+FRR menor que ambos individualmente.
-- **Validar cc=8/9/10** — medir se validação pública, label-flip check e comportamento por margem reduzem FRR em label flip sem perder o FPR=0% do cc=7.
+- **Validar cc=8/9/10** — medir se validação pública, label-flip check e targeted label-flip reduzem FRR em label flip sem perder o FPR=0% do cc=7.
 
 ## Lições
 
@@ -197,4 +197,4 @@ Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`noteboo
 6. **F1 do detector não é a métrica final em FL**. FPR e FRR em produção, e como interagem com a tolerância do algoritmo de agregação, é o que define se a defesa serve. F1=0.83 com FPR=0% (cc=7) é melhor que F1=0.83 com FPR=11% (cc=6) na prática.
 7. **Distribution shift treino → produção penaliza modelos overparametrizados**. DistilBERT (66M params) overfita à distribuição empírica do training set. MLP+features (13k params) opera sobre invariantes estatísticos e generaliza melhor. Em FL real, o detector vê pesos que o eval set nunca viu.
 8. **LoRA com classification heads exige `modules_to_save` explícito**. Default só salva matrizes A/B das atenções; o head treinado fica órfão. Bug silencioso — F1 in-memory não bate com F1 ao recarregar.
-9. **Label flip precisa sinal de comportamento, não só sinal de pesos**. `cc=8/9/10` adicionam validação pública, direção da camada final e margem para rótulo invertido para observar efeito do update no holdout limpo.
+9. **Label flip precisa sinal de comportamento, não só sinal de pesos**. `cc=8/9/10` adicionam validação pública, direção da camada final, margem para rótulo invertido e score direcionado por delta global-cliente para observar efeito do update no holdout limpo.

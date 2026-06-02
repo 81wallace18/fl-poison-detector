@@ -1,6 +1,6 @@
 # <img src="docs/imgs/logo-green.png" alt="icon" height="24" style="vertical-align:sub;"/> PFLlib: Personalized Federated Learning Library and Benchmark
 
-> **Nota — fork integrado ao `fl-poison-detector`**: Este diretório é uma cópia do [PFLlibMonza](https://github.com/VeigarGit/PFLlibMonza) (que por sua vez é fork do [PFLlib upstream](https://github.com/TsingZ0/PFLlib)) com modificações pra defesa contra clientes maliciosos via detector NLP/MLP. Para o pipeline completo (gerar dataset → treinar detector → defesa em produção como `cc=6`, `cc=7`, `cc=8`, `cc=9` ou `cc=10`), ver os docs no diretório pai:
+> **Nota — fork integrado ao `fl-poison-detector`**: Este diretório é uma cópia do [PFLlibMonza](https://github.com/VeigarGit/PFLlibMonza) (que por sua vez é fork do [PFLlib upstream](https://github.com/TsingZ0/PFLlib)) com modificações pra defesa contra clientes maliciosos via detector DistilBERT/MLP. Para o pipeline completo (gerar dataset → treinar detector → defesa em produção como `cc=6`, `cc=7`, `cc=8`, `cc=9` ou `cc=10`), ver os docs no diretório pai:
 > - [`../HOWTO.md`](../HOWTO.md) — passo-a-passo
 > - [`../MONZA_RESULTS.md`](../MONZA_RESULTS.md) — resultados experimentais
 > - [`../EVOLUTION.md`](../EVOLUTION.md) — narrativa metodológica
@@ -8,7 +8,7 @@
 > Modificações neste fork:
 > - `system/main.py`: novos args `--dump_state_dicts`, `--detector_dir`, `--bert_detector_dir`, `--mlp_detector_dir` e checks de holdout
 > - `system/flcore/clients/clientmaliciousavg.py`: expõe `last_attack_type`
-> - `system/flcore/servers/serveravg.py`: defesas `cc==6` (NLP), `cc==7` (MLP), `cc==8` (MLP+validação), `cc==9` (BERT+MLP+label-flip check) e `cc==10` (BERT+MLP+comportamento label-flip)
+> - `system/flcore/servers/serveravg.py`: defesas `cc==6` (DistilBERT), `cc==7` (MLP), `cc==8` (MLP+validação), `cc==9` (DistilBERT+MLP+label-flip check) e `cc==10` (DistilBERT+MLP+TargetLF)
 > - `system/flcore/detector/`: módulo novo (cópia gêmea de `cc/cc_mlp/fl_save/features` do parent + checks de validação/comportamento)
 > - `system/utils/data_utils.py`: label flip real lê `dataset/<DATA>/train_mal/` e falha se esse diretório não existir
 

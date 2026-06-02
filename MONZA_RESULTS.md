@@ -1,8 +1,8 @@
 # MONZA × jpt — Resultados experimentais
 
-Pipeline completo: **PFLlibMonza** (FL real) gera dataset → **detector NLP/MLP** (jpt) treina → defesa volta como `cc=6/cc=7` no servidor MONZA, comparada com baselines `cc=2` (cluster) e `cc=3` (cosseno+score).
+Pipeline completo: **PFLlibMonza** (FL real) gera dataset → **detector DistilBERT/MLP** (jpt) treina → defesa volta como `cc=6/cc=7` no servidor MONZA, comparada com baselines `cc=2` (cluster) e `cc=3` (cosseno+score).
 
-> **Nota pós-resultado**: este relatório preserva os resultados fechados de 2026-04-28 para `cc=2/3/6/7`. O `cc=8` (MLP+validação pública para label flip), `cc=9` (BERT+MLP+label-flip check) e `cc=10` (BERT+MLP+comportamento label-flip) foram adicionados depois e ainda precisam de novo run experimental para ter FPR/FRR reportados.
+> **Nota pós-resultado**: este relatório preserva os resultados fechados de 2026-04-28 para `cc=2/3/6/7`. O `cc=8` (MLP+validação pública para label flip), `cc=9` (DistilBERT+MLP+label-flip check) e `cc=10` (DistilBERT+MLP+TargetLF) foram adicionados depois e ainda precisam de novo run experimental para ter FPR/FRR reportados.
 >
 > **Correção importante**: uma auditoria posterior encontrou bug em `utils/data_utils.py`: `is_malicious=True, is_train=True` imprimia "Malicious label", mas acabava lendo `test/` em vez de `train_mal/`. Portanto, os números antigos de `label flip` abaixo devem ser tratados como históricos e precisam ser rerodados após gerar `PFLlibMonza/dataset/MNIST/train_mal/`.
 
@@ -118,7 +118,7 @@ Score combinado (FPR + FRR, menor = melhor):
 ## Caveats
 
 1. **Eval in-sample**: detectores treinados e avaliados no mesmo conjunto MONZA. F1 reportado é otimista. Sem cross-validation pra outro dataset/seed.
-2. **Bug `model_zeros` no MONZA** (`attack.py:14`): usa `torch.ones`, não `torch.zeros` — contradiz o nome. Detector aprendeu a pegar "pesos = 1.0", não "pesos = 0.0". Se outro fork do MONZA corrigir, detector vai falhar nessa categoria específica.
+2. **Histórico `model_zeros` no MONZA**: nos resultados antigos, `model_zeros` usava `torch.ones`, não `torch.zeros`. O pipeline atual zera de verdade; portanto essa categoria precisa de novo dump e retreino antes de comparar com este relatório.
 3. **`model_noise` bugado** (`attack.py:52` early return): `-atk all` cobre 4 categorias, não 5. Em produção real, ataques com noise alto vão passar pelo detector.
 4. **VGG/Cifar10 cortado** por disco (~280GB inviável). Sem evidência de generalização além de FedAvgCNN/MNIST.
 5. **Single seed (42)** — sem intervalo de confiança nos números do detector.

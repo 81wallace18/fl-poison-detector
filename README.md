@@ -26,8 +26,8 @@ Validação posterior em FL real (PFLlibMonza, 100 clientes Dirichlet non-IID, 3
 | 6 | NLP DistilBERT (este trabalho) | 0.112 | 0.114 | |
 | **7** | **MLP+features (este trabalho)** | **0.000** | **0.156** | 🏆 |
 | 8 | MLP+validação pública | experimental | experimental | pega label flip |
-| 9 | BERT+MLP+label-flip check | experimental | experimental | comparação ensemble |
-| 10 | BERT+MLP+comportamento label-flip | experimental | experimental | recomendado para rerun de malicious_label |
+| 9 | DistilBERT+MLP+label-flip check | experimental | experimental | comparação ensemble |
+| 10 | DistilBERT+MLP+targeted label-flip | experimental | experimental | voto DistilBERT/MLP/TargetLF, foco em malicious_label |
 
 MLP+features Pareto-supera os 2 baselines do PFLlib. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
 
@@ -69,7 +69,7 @@ Nota sobre `malicious_label`: o runtime MONZA agora exige `PFLlibMonza/dataset/M
 │   ├── detector_mlp.py                   # MLP sobre features handcrafted
 │   ├── features.py                       # extrator de 60 features
 │   ├── bench_grid.py                     # orquestrador 4×2
-│   ├── cc.py                             # ClientCheck NLP — usado pelo MONZA
+│   ├── cc.py                             # ClientCheck DistilBERT standalone
 │   ├── cc_mlp.py                         # ClientCheckMLP — usado pelo MONZA
 │   └── fl_save.py                        # helper de dump de state_dicts
 └── PFLlibMonza/                          # fork PFLlib (FL simulator) integrado
@@ -92,7 +92,7 @@ Saídas geradas em runtime (todas no `.gitignore`, raiz do projeto):
 
 Pipeline DistilBERT+LoRA:
 
-1. `preprocess_weights(state_dict)` — pega todos os tensores com `'weight'` no nome, normaliza cada um por quantis (q5/q95) com clamp em [0, 1], concatena, faz **pooling estratificado** via `torch.linspace(0, n-1, 512)` (em vez de truncamento), discretiza em 10000 bins (PAD_ID=0 reservado).
+1. `preprocess_weights(state_dict)` — ordena camadas de forma canônica, pega tensores com `'weight'` no nome, normaliza cada um por quantis (q5/q95) com clamp em [0, 1], concatena, faz **pooling estratificado** via `torch.linspace(0, n-1, 512)` (em vez de truncamento), discretiza em 10000 bins (PAD_ID=0 reservado).
 2. `tokenize_function` monta `input_ids` + `attention_mask` (1 para tokens não-PAD).
 3. `build_and_train(seed)` — DistilBERT base + LoRA `r=8` em `q_lin`/`v_lin`. Treino: 15 epochs, lr=2e-4, weight_decay=0.01, scheduler cosine, warmup 6%, batch=16. Early stopping `patience=7` em F1.
 4. `tune_threshold(logits, labels)` — sweep de 200 thresholds em `(logit_mal − logit_ben)`, escolhe o que maximiza F1. Tunado in-sample no eval — métrica é otimista mas marginal.
