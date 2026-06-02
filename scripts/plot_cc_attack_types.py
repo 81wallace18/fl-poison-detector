@@ -32,13 +32,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_cc_type(system_dir: Path) -> pd.DataFrame:
+def load_cc_type(system_dir: Path, min_rounds: int) -> pd.DataFrame:
     frames = []
     for path in sorted(system_dir.glob("cc_type_results_*.csv")):
         df = pd.read_csv(path)
         if df.empty:
             continue
-        df = latest_run(df)
+        df = latest_run(df, min_rounds=min_rounds)
         frames.append(df)
     if not frames:
         raise FileNotFoundError(f"Nenhum cc_type_results_*.csv encontrado em {system_dir}")
@@ -47,7 +47,14 @@ def load_cc_type(system_dir: Path) -> pd.DataFrame:
     return out
 
 
-def latest_run(df: pd.DataFrame) -> pd.DataFrame:
+def latest_run(df: pd.DataFrame, min_rounds: int) -> pd.DataFrame:
+    if "RunID" in df.columns:
+        run_ids = list(df["RunID"].drop_duplicates())
+        for run_id in reversed(run_ids):
+            run = df[df["RunID"] == run_id].copy()
+            if run["Round"].astype(int).nunique() >= min_rounds:
+                return run
+        return df[df["RunID"] == run_ids[-1]].copy()
     rounds = df["Round"].astype(int)
     starts = df.index[rounds < rounds.shift(fill_value=rounds.iloc[0])].tolist()
     start = starts[-1] if starts else 0
@@ -56,21 +63,23 @@ def latest_run(df: pd.DataFrame) -> pd.DataFrame:
 
 def summarize_tail(df: pd.DataFrame, tail_rounds: int) -> pd.DataFrame:
     rows = []
-    for (cc, attack_type), group in df.groupby(["CC", "AttackType"], sort=True):
-        tail = group.sort_values("Round").tail(tail_rounds)
-        total = tail["Total"].sum()
-        removed = tail["Removed"].sum()
-        rows.append(
-            {
-                "CC": cc,
-                "Defense": f"cc={cc}",
-                "AttackType": attack_type,
-                "Total": int(total),
-                "Removed": int(removed),
-                "Rate": float(removed / total) if total else 0.0,
-                "Metric": "FPR" if attack_type == "benign" else "recall",
-            }
-        )
+    for cc, cc_group in df.groupby("CC", sort=True):
+        tail_round_values = sorted(cc_group["Round"].astype(int).unique())[-tail_rounds:]
+        tail_cc = cc_group[cc_group["Round"].isin(tail_round_values)]
+        for attack_type, group in tail_cc.groupby("AttackType", sort=True):
+            total = group["Total"].sum()
+            removed = group["Removed"].sum()
+            rows.append(
+                {
+                    "CC": cc,
+                    "Defense": f"cc={cc}",
+                    "AttackType": attack_type,
+                    "Total": int(total),
+                    "Removed": int(removed),
+                    "Rate": float(removed / total) if total else 0.0,
+                    "Metric": "FPR" if attack_type == "benign" else "recall",
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -114,7 +123,7 @@ def plot_label(summary: pd.DataFrame, out_dir: Path) -> None:
 def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    df = load_cc_type(args.system_dir)
+    df = load_cc_type(args.system_dir, args.tail_rounds)
     summary = summarize_tail(df, args.tail_rounds)
     summary.to_csv(args.out_dir / "cc_attack_type_summary.csv", index=False)
     plot_summary(summary, args.out_dir)
