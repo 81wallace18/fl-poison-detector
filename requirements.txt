@@ -6,9 +6,10 @@ torchvision
 
 # Detector NLP / MLP
 transformers
-datasets
+datasets==2.19.2
 safetensors
-evaluate
+evaluate==0.4.2
+pyarrow==20.0.0
 peft
 accelerate
 bitsandbytes
