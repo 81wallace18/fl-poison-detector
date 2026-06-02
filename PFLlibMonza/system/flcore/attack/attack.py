@@ -9,10 +9,7 @@ def model_zeros(model, device = 'cpu'):
     copy_model = copy.deepcopy(model)
     for param in copy_model.parameters():
         # zera todos os parametros
-        # param.data.zero_()
-        
-        param_ones = torch.ones(size=param.shape)
-        param.data = param_ones.to(device)
+        param.data.zero_()
 
     return copy_model
 

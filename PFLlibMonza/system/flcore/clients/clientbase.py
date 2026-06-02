@@ -54,14 +54,14 @@ class Client(object):
         self.learning_rate_decay = args.learning_rate_decay
 
 
-    def load_train_data(self, batch_size=None, is_malicious=False):
+    def load_train_data(self, batch_size=None, is_malicious=False, drop_last=True):
         if batch_size == None:
             batch_size = self.batch_size
         if is_malicious:
             train_data = read_client_data(self.dataset, self.id, is_train=True, few_shot=self.few_shot, is_malicious=True)
         else:
             train_data = read_client_data(self.dataset, self.id, is_train=True, few_shot=self.few_shot, is_malicious=False)
-        return DataLoader(train_data, batch_size, drop_last=True, shuffle=True)
+        return DataLoader(train_data, batch_size, drop_last=drop_last, shuffle=True)
 
     def load_test_data(self, batch_size=None):
         if batch_size == None:
