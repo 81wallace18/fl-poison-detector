@@ -42,11 +42,29 @@ class FedAvg(Server):
             with open(self.csv_filename, mode='w', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow(['Round', 'FPR', 'FRR'])
+        self.cc_detail_filename = f'cc_detail_results_{self.cc}.csv'
+        self.cc_type_filename = f'cc_type_results_{self.cc}.csv'
+        if self.cc in (6, 7, 8, 9, 10):
+            if not os.path.exists(self.cc_detail_filename):
+                with open(self.cc_detail_filename, mode='w', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([
+                        'Round', 'CC', 'ClientID', 'AttackType', 'IsMaliciousRound',
+                        'MaliciousGroup', 'Removed', 'Reason', 'MLPHit', 'BERTHit',
+                        'ValHit', 'LFHit', 'BehaviorHit', 'MLPScore', 'BERTScore',
+                        'ValScore', 'LFCos', 'LFWorstClassDelta',
+                        'BehaviorMarginDelta', 'BehaviorLossDelta',
+                    ])
+            if not os.path.exists(self.cc_type_filename):
+                with open(self.cc_type_filename, mode='w', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(['Round', 'CC', 'AttackType', 'Total', 'Removed', 'Rate', 'Metric'])
 
         self.dump_dir = getattr(args, 'dump_state_dicts', '') or ''
         self.client_check = None
         self.bert_client_check = None
         self.mlp_client_check = None
+        self.cc9_lf_standalone = bool(getattr(args, 'cc9_lf_standalone', False))
         if self.cc == 6:
             detector_dir = getattr(args, 'detector_dir', '') or ''
             if not detector_dir:
@@ -119,6 +137,8 @@ class FedAvg(Server):
                 min_margin_delta=getattr(args, 'behavior_check_min_margin_delta', 0.20),
                 min_loss_delta=getattr(args, 'behavior_check_min_loss_delta', -0.05),
                 mad_k=getattr(args, 'behavior_check_mad_k', 3.0),
+                max_reject_fraction=getattr(args, 'behavior_check_max_reject_fraction', 0.05),
+                flip_mode=getattr(args, 'behavior_check_flip_mode', 'reverse'),
             )
 
         print(f"\nJoin ratio / total clients: {self.join_ratio} / {self.num_clients}")
@@ -129,15 +149,41 @@ class FedAvg(Server):
     def _build_public_validation_loader(self, label='cc=8'):
         target = int(getattr(self.args, 'val_check_samples', 256))
         batch_size = int(getattr(self.args, 'val_check_batch_size', 128))
-        samples = []
+        buckets = {c: [] for c in range(self.num_classes)}
+        all_samples = []
         take = max(1, (target + max(self.num_clients, 1) - 1) // max(self.num_clients, 1))
+        per_class = max(1, (target + max(self.num_classes, 1) - 1) // max(self.num_classes, 1))
         for cid in range(self.num_clients):
             client_data = read_client_data(self.dataset, cid, is_train=False, few_shot=self.few_shot)
             if not client_data:
                 continue
-            samples.extend(client_data[:take])
+            for sample in client_data[:max(take, per_class)]:
+                all_samples.append(sample)
+                y = sample[1]
+                cls = int(y.item() if hasattr(y, 'item') else y)
+                if cls in buckets and len(buckets[cls]) < per_class:
+                    buckets[cls].append(sample)
+            if sum(len(v) for v in buckets.values()) >= target:
+                break
+        samples = []
+        seen = set()
+        while len(samples) < target:
+            added = False
+            for cls in range(self.num_classes):
+                if buckets[cls]:
+                    sample = buckets[cls].pop(0)
+                    samples.append(sample)
+                    seen.add(id(sample))
+                    added = True
+                    if len(samples) >= target:
+                        break
+            if not added:
+                break
+        for sample in all_samples:
             if len(samples) >= target:
                 break
+            if id(sample) not in seen:
+                samples.append(sample)
         if not samples:
             raise ValueError(f"{label} requer dados de teste para montar holdout publico.")
         samples = samples[:target]
@@ -151,6 +197,41 @@ class FedAvg(Server):
         with open(self.csv_filename, mode='a', newline='') as file:
             writer = csv.writer(file)
             writer.writerow([round_number, FPR, FRR])
+
+    def save_cc_detail_to_csv(self, rows):
+        if not rows:
+            return
+        with open(self.cc_detail_filename, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            for row in rows:
+                writer.writerow([
+                    row['round'], row['cc'], row['client_id'], row['attack_type'],
+                    int(row['is_malicious_round']), int(row['malicious_group']),
+                    int(row['removed']), row['reason'], int(row['mlp_hit']),
+                    int(row['bert_hit']), int(row['val_hit']), int(row['lf_hit']),
+                    int(row['behavior_hit']), row['mlp_score'], row['bert_score'],
+                    row['val_score'], row['lf_cos'], row['lf_worst_class_delta'],
+                    row['behavior_margin_delta'], row['behavior_loss_delta'],
+                ])
+
+    def save_cc_type_to_csv(self, round_number, rows):
+        if not rows:
+            return
+        grouped = {}
+        for row in rows:
+            attack_type = row['attack_type']
+            bucket = grouped.setdefault(attack_type, {'total': 0, 'removed': 0})
+            bucket['total'] += 1
+            bucket['removed'] += int(row['removed'])
+        with open(self.cc_type_filename, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            for attack_type in sorted(grouped):
+                bucket = grouped[attack_type]
+                total = bucket['total']
+                removed = bucket['removed']
+                rate = removed / total if total else 0.0
+                metric = 'FPR' if attack_type == 'benign' else 'recall'
+                writer.writerow([round_number, self.cc, attack_type, total, removed, rate, metric])
 
     def normalize_entropies(self, client_entropies):
         """Normaliza as entropias para que fiquem no intervalo [0, 1]"""
@@ -402,6 +483,7 @@ class FedAvg(Server):
                     val_scores = {}
                     lf_scores = {}
                     behavior_scores = {}
+                    clients_by_id = {c.id: c for c in self.clients}
                     if self.cc == 8:
                         val_scores = self.public_val_check.score_round(
                             self.global_model, self.uploaded_models, self.ids
@@ -416,47 +498,103 @@ class FedAvg(Server):
                         )
                     a = 0
                     total = max(len(self.index_malicious), 1)
+                    detail_rows = []
                     for idx in range(len(self.uploaded_models) - 1, -1, -1):
                         client_id = self.ids[idx]
+                        client = clients_by_id.get(client_id)
+                        attack_type = getattr(client, 'last_attack_type', 'unknown')
+                        is_malicious_round = bool(getattr(client, 'is_malicious', False))
                         sd = self.uploaded_models[idx].state_dict()
+                        mlp_result = {'is_malicious': False, 'score': 0.0}
+                        bert_result = {'is_malicious': False, 'score': 0.0}
                         if self.cc in (9, 10):
-                            mlp_hit = self.mlp_client_check.is_malicious(sd)
-                            bert_hit = self.bert_client_check.is_malicious(sd)
+                            mlp_result = self.mlp_client_check.classify(sd)
+                            bert_result = self.bert_client_check.classify(sd)
+                            mlp_hit = bool(mlp_result['is_malicious'])
+                            bert_hit = bool(bert_result['is_malicious'])
+                        elif self.cc == 6:
+                            bert_result = self.client_check.classify(sd)
+                            bert_hit = bool(bert_result['is_malicious'])
+                            mlp_hit = False
                         else:
-                            mlp_hit = self.client_check.is_malicious(sd)
+                            mlp_result = self.client_check.classify(sd)
+                            mlp_hit = bool(mlp_result['is_malicious'])
                             bert_hit = False
                         val_hit = bool(val_scores.get(client_id, {}).get('reject', False))
                         lf_hit = bool(lf_scores.get(client_id, {}).get('reject', False))
                         behavior_hit = bool(behavior_scores.get(client_id, {}).get('reject', False))
-                        cc9_hit = bool(mlp_hit or (bert_hit and lf_hit)) if self.cc == 9 else False
+                        cc9_hit = bool(
+                            mlp_hit or (bert_hit and lf_hit) or (self.cc9_lf_standalone and lf_hit)
+                        ) if self.cc == 9 else False
                         cc10_hit = bool(mlp_hit or behavior_hit) if self.cc == 10 else False
-                        if mlp_hit or val_hit or cc9_hit or cc10_hit:
+                        removed = bool(
+                            (self.cc == 6 and bert_hit)
+                            or (self.cc == 7 and mlp_hit)
+                            or (self.cc == 8 and (mlp_hit or val_hit))
+                            or cc9_hit
+                            or cc10_hit
+                        )
+                        reason_parts = []
+                        if mlp_hit:
+                            reason_parts.append('mlp')
+                        if bert_hit:
+                            reason_parts.append('bert')
+                        if val_hit:
+                            reason_parts.append('val')
+                        if lf_hit:
+                            reason_parts.append('lf')
+                        if behavior_hit:
+                            reason_parts.append('behavior')
+                        reason = '+'.join(reason_parts) if reason_parts else 'none'
+                        v_val = val_scores.get(client_id, {})
+                        v_lf = lf_scores.get(client_id, {})
+                        v_behavior = behavior_scores.get(client_id, {})
+                        detail_rows.append({
+                            'round': i,
+                            'cc': self.cc,
+                            'client_id': client_id,
+                            'attack_type': attack_type,
+                            'is_malicious_round': is_malicious_round,
+                            'malicious_group': client_id in self.index_malicious,
+                            'removed': removed,
+                            'reason': reason if removed else 'none',
+                            'mlp_hit': mlp_hit,
+                            'bert_hit': bert_hit,
+                            'val_hit': val_hit,
+                            'lf_hit': lf_hit,
+                            'behavior_hit': behavior_hit,
+                            'mlp_score': float(mlp_result.get('score', 0.0)),
+                            'bert_score': float(bert_result.get('score', 0.0)),
+                            'val_score': float(v_val.get('score', 0.0)),
+                            'lf_cos': float(v_lf.get('final_cos', 0.0)),
+                            'lf_worst_class_delta': float(v_lf.get('worst_class_delta', 0.0)),
+                            'behavior_margin_delta': float(v_behavior.get('margin_delta', 0.0)),
+                            'behavior_loss_delta': float(v_behavior.get('loss_delta', 0.0)),
+                        })
+                        if removed:
                             if client_id in self.index_malicious:
                                 a += 1
                             if self.cc == 8:
-                                v = val_scores.get(client_id, {})
                                 print(
                                     f"cc=8: removing client {client_id} ({detector_name}) "
-                                    f"mlp={mlp_hit} val={val_hit} score={v.get('score', 0.0):.4f}"
+                                    f"mlp={mlp_hit} val={val_hit} score={v_val.get('score', 0.0):.4f}"
                                 )
                             elif self.cc == 9:
-                                v = lf_scores.get(client_id, {})
                                 print(
                                     f"cc=9: removing client {client_id} ({detector_name}) "
                                     f"bert={bert_hit} mlp={mlp_hit} lf={lf_hit} "
-                                    f"cos={v.get('final_cos', 0.0):.4f} "
-                                    f"class={v.get('worst_class', -1)} "
-                                    f"delta={v.get('worst_class_delta', 0.0):.4f}"
+                                    f"cos={v_lf.get('final_cos', 0.0):.4f} "
+                                    f"class={v_lf.get('worst_class', -1)} "
+                                    f"delta={v_lf.get('worst_class_delta', 0.0):.4f}"
                                 )
                             elif self.cc == 10:
-                                v = behavior_scores.get(client_id, {})
                                 print(
                                     f"cc=10: removing client {client_id} ({detector_name}) "
                                     f"bert={bert_hit} mlp={mlp_hit} behavior={behavior_hit} "
-                                    f"class={v.get('worst_class', -1)} "
-                                    f"margin_delta={v.get('margin_delta', 0.0):.4f} "
-                                    f"loss_delta={v.get('loss_delta', 0.0):.4f} "
-                                    f"acc={v.get('accuracy', 0.0):.4f}"
+                                    f"class={v_behavior.get('worst_class', -1)} "
+                                    f"margin_delta={v_behavior.get('margin_delta', 0.0):.4f} "
+                                    f"loss_delta={v_behavior.get('loss_delta', 0.0):.4f} "
+                                    f"acc={v_behavior.get('accuracy', 0.0):.4f}"
                                 )
                             else:
                                 print(f'cc={self.cc}: removing client {client_id} ({detector_name} detector)')
@@ -465,6 +603,8 @@ class FedAvg(Server):
                             del self.ids[idx]
                             del self.uploaded_ids[idx]
                             del self.uploaded_weights[idx]
+                    self.save_cc_detail_to_csv(detail_rows)
+                    self.save_cc_type_to_csv(i, detail_rows)
                     a = (a / total) * 100
                     print(f'porcentagem de maliciosos verdadeiros achados (cc={self.cc}): {a:.2f}%')
                     if self.uploaded_weights:

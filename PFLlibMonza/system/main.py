@@ -542,6 +542,13 @@ if __name__ == "__main__":
         help='Delta minimo de loss limpo permitido para rejeicao comportamental no cc=10.')
     parser.add_argument('--behavior_check_mad_k', type=float, default=3.0,
         help='Multiplicador MAD para outlier de margem comportamental no cc=10.')
+    parser.add_argument('--behavior_check_max_reject_fraction', type=float, default=0.05,
+        help='Fração máxima aproximada de clientes removidos por margem comportamental no cc=10.')
+    parser.add_argument('--behavior_check_flip_mode', type=str, default='reverse',
+        choices=['reverse', 'max_non_true'],
+        help="Modo da margem comportamental no cc=10: 'reverse' usa y->num_classes-1-y; 'max_non_true' testa qualquer classe alvo.")
+    parser.add_argument('--cc9_lf_standalone', action='store_true',
+        help='Permite que o LabelFlipCheck remova no cc=9 mesmo sem hit do BERT.')
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id

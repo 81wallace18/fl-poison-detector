@@ -160,6 +160,8 @@ cd PFLlibMonza/system
     --lf_check_root_lr 0.01 --lf_check_root_steps 5 \
     --lf_check_min_loss_delta 0.02 --lf_check_mad_k 3.0 \
     --lf_check_max_final_cos 0.0
+# opcional para teste agressivo de label flip:
+# adicione --cc9_lf_standalone para permitir que o label-flip check remova sem confirmação do BERT
 # MLP + BERT + comportamento focado em label flip
 ../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 10 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
@@ -168,11 +170,16 @@ cd PFLlibMonza/system
     --val_check_samples 512 --val_check_batch_size 128 \
     --behavior_check_min_margin_delta 0.20 \
     --behavior_check_min_loss_delta -0.05 \
-    --behavior_check_mad_k 3.0
+    --behavior_check_mad_k 3.0 \
+    --behavior_check_max_reject_fraction 0.05 \
+    --behavior_check_flip_mode reverse
 cd ../..
 ```
 
-**Saídas**: `PFLlibMonza/system/fpr_frr_results_6.csv`, `_7.csv`, `_8.csv`, `_9.csv` e `_10.csv`.
+**Saídas**:
+- `PFLlibMonza/system/fpr_frr_results_{6,7,8,9,10}.csv`: FPR/FRR global por round.
+- `PFLlibMonza/system/cc_detail_results_{6,7,8,9,10}.csv`: decisão por cliente/round, com `AttackType`, hits e scores.
+- `PFLlibMonza/system/cc_type_results_{6,7,8,9,10}.csv`: FPR benigno e recall por tipo de ataque, incluindo `malicious_label`.
 
 ### Passo 3b (opcional) — Baselines do PFLlib
 
@@ -218,6 +225,22 @@ Principais saídas:
 - `plot_fpr_frr_by_round.png`
 - `plot_tradeoff_fpr_frr.png`
 - `plot_detector_metrics.png`
+
+### Gráficos por tipo de ataque nos CCs
+
+Depois de rodar `cc=6/7/8/9/10`, gere os gráficos focados em `malicious_label`:
+
+```bash
+.venv/bin/python scripts/plot_cc_attack_types.py \
+    --system-dir PFLlibMonza/system \
+    --out-dir analysis_outputs \
+    --tail-rounds 30
+```
+
+Saídas:
+- `analysis_outputs/cc_attack_type_summary.csv`
+- `analysis_outputs/plot_cc_recall_by_attack_type.png`
+- `analysis_outputs/plot_cc_malicious_label_recall.png`
 - `plot_recall_by_attack.png`
 - `plot_detector_attack_table.png`
 - `plot_label_flip_recall.png`

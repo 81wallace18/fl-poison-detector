@@ -22,6 +22,8 @@ class BehaviorLabelFlipCheck:
         min_margin_delta: float = 0.20,
         min_loss_delta: float = -0.05,
         mad_k: float = 3.0,
+        max_reject_fraction: float = 0.05,
+        flip_mode: str = 'reverse',
     ) -> None:
         self.val_loader = val_loader
         self.device = torch.device(device)
@@ -29,7 +31,11 @@ class BehaviorLabelFlipCheck:
         self.min_margin_delta = float(min_margin_delta)
         self.min_loss_delta = float(min_loss_delta)
         self.mad_k = float(mad_k)
+        self.max_reject_fraction = float(max_reject_fraction)
+        self.flip_mode = str(flip_mode)
         self.loss_none = nn.CrossEntropyLoss(reduction='none')
+        if self.flip_mode not in ('reverse', 'max_non_true'):
+            raise ValueError("flip_mode deve ser 'reverse' ou 'max_non_true'.")
 
     def _to_device(self, x, y):
         if type(x) == type([]):
@@ -56,9 +62,14 @@ class BehaviorLabelFlipCheck:
             logits = model(x)
             losses = self.loss_none(logits, y)
             preds = logits.argmax(dim=1)
-            flipped = (self.num_classes - 1 - y).clamp(0, self.num_classes - 1)
             rows = torch.arange(y.numel(), device=y.device)
-            margins = logits[rows, flipped] - logits[rows, y]
+            if self.flip_mode == 'reverse':
+                flipped = (self.num_classes - 1 - y).clamp(0, self.num_classes - 1)
+                margins = logits[rows, flipped] - logits[rows, y]
+            else:
+                masked = logits.clone()
+                masked[rows, y] = float('-inf')
+                margins = masked.max(dim=1).values - logits[rows, y]
 
             total_loss += float(losses.sum().item())
             total_correct += int((preds == y).sum().item())
@@ -122,6 +133,9 @@ class BehaviorLabelFlipCheck:
         median = float(np.median(margin_scores))
         mad = float(np.median(np.abs(margin_scores - median)))
         outlier_threshold = median + self.mad_k * max(mad, 1e-6)
+        if self.max_reject_fraction > 0.0:
+            q = min(max(1.0 - self.max_reject_fraction, 0.0), 1.0)
+            outlier_threshold = max(outlier_threshold, float(np.quantile(margin_scores, q)))
 
         out: Dict[int, Dict[str, float | bool | int]] = {}
         for cid, margin_delta, loss_delta, worst_class, accuracy, accuracy_delta in rows:
