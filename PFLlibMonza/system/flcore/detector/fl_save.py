@@ -35,9 +35,19 @@ def save_client_update(
     safe_path = out / f'{sample_id}.safetensors'
     json_path = out / f'{sample_id}.json'
 
-    save_file(cpu_sd, str(safe_path))
-    with open(json_path, 'w') as f:
-        json.dump({'label': int(label), 'type': str(type_)}, f)
+    tmp_safe_path = safe_path.with_suffix(safe_path.suffix + '.tmp')
+    tmp_json_path = json_path.with_suffix(json_path.suffix + '.tmp')
+
+    try:
+        save_file(cpu_sd, str(tmp_safe_path))
+        with open(tmp_json_path, 'w') as f:
+            json.dump({'label': int(label), 'type': str(type_)}, f)
+        os.replace(tmp_safe_path, safe_path)
+        os.replace(tmp_json_path, json_path)
+    except Exception:
+        tmp_safe_path.unlink(missing_ok=True)
+        tmp_json_path.unlink(missing_ok=True)
+        raise
 
     return safe_path
 
