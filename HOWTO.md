@@ -31,10 +31,10 @@ Todos os comandos abaixo usam essa mesma `.venv` da raiz. Quando o comando roda 
 
 ```bash
 cd PFLlibMonza/dataset
-python generate_MNIST.py noniid - dir
+../../.venv/bin/python generate_MNIST.py noniid - dir
 ls MNIST/train/ | wc -l   # esperado: 100
 cd ../..
-.venv/bin/python scripts/create_train_mal.py --dataset-dir PFLlibMonza/dataset/MNIST --num-classes 10
+.venv/bin/python scripts/create_label_flip_train_mal.py --dataset-dir PFLlibMonza/dataset/MNIST --num-classes 10
 cd PFLlibMonza/dataset
 ls MNIST/train_mal/ | wc -l   # esperado: 100 para ataque malicious_label real
 cd ../..
@@ -42,7 +42,7 @@ cd ../..
 
 Scripts no `PFLlibMonza/dataset/` (`generate_MNIST.py`, `generate_Cifar10.py`, etc) hardcodam `num_clients` no topo do arquivo. Para outras configurações, edite a constante `num_clients`.
 
-> **Importante para label flip**: `PFLlibMonza/system/utils/data_utils.py` agora lê clientes maliciosos de `MNIST/train_mal/`. Se essa pasta não existir, o run falha de propósito. O script `scripts/create_train_mal.py` cria o `train_mal` com os mesmos `x` de treino e labels invertidos de forma determinística (`y_flip = num_classes - 1 - y`, no MNIST: 0↔9, 1↔8, ...).
+> **Importante para label flip**: `PFLlibMonza/system/utils/data_utils.py` agora lê clientes maliciosos de `MNIST/train_mal/`. Se essa pasta não existir, o run falha de propósito. O script `scripts/create_label_flip_train_mal.py` cria o `train_mal` com os mesmos `x` de treino e labels invertidos de forma determinística (`y_flip = num_classes - 1 - y`, no MNIST: 0↔9, 1↔8, ...).
 
 ### 3. Verificar GPU e imports
 
@@ -288,7 +288,7 @@ jpt/
 │   ├── cc_mlp.py                # 🆕 ClientCheckMLP — usado pelo MONZA
 │   └── fl_save.py               # 🆕 helper de dump de state_dicts
 ├── scripts/
-│   └── create_train_mal.py      # cria train_mal/ com label flip deterministico
+│   └── create_label_flip_train_mal.py # cria train_mal/ com label flip deterministico
 └── PFLlibMonza/                 # 🆕 fork do PFLlib (FL simulator)
     ├── system/
     │   ├── main.py              # +args --dump_state_dicts, detectores e cc=8/9/10
