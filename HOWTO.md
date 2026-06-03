@@ -4,7 +4,7 @@ Este repo integra **PFLlibMonza** (FL real, em `PFLlibMonza/`) com **jpt** (dete
 
 1. **MONZA** roda FL com clientes maliciosos e dumpa state_dicts → dataset
 2. **jpt** treina detectores (DistilBERT+LoRA e MLP+features) sobre o dataset
-3. **MONZA** carrega o detector treinado num novo método de defesa (`cc=6` DistilBERT, `cc=7` MLP, `cc=8` MLP+validação pública, `cc=9` MLP + DistilBERT confirmado por label-flip check ou `cc=10` DistilBERT+MLP+targeted label-flip) e filtra clientes maliciosos antes da agregação
+3. **MONZA** compara os baselines (`cc=2` cluster cosseno, `cc=3` cosseno+score) com os dois detectores finais (`cc=6` DistilBERT, `cc=7` MLP)
 
 Resultado experimental fechado em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb).
 
@@ -52,8 +52,6 @@ cd PFLlibMonza/system
 import torch
 from flcore.detector.cc import ClientCheck
 from flcore.detector.cc_mlp import ClientCheckMLP
-from flcore.detector.validation_check import PublicValidationCheck
-from flcore.detector.targeted_label_flip_check import TargetedLabelFlipCheck
 from flcore.detector import fl_save
 print('torch:', torch.__version__, '| cuda:', torch.cuda.is_available())
 print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')
@@ -66,17 +64,48 @@ Esperado: `cuda: True | GPU: NVIDIA GeForce RTX 5060 Ti` + `imports OK`.
 
 ---
 
+## Comando unico para rodar tudo do zero
+
+O script abaixo limpa artefatos gerados, regenera MNIST + `train_mal/`, faz warm-up limpo, dumpa os `state_dicts` com o modelo global anterior de cada round, treina DistilBERT e MLP, roda `cc=2`, `cc=3`, `cc=6` e `cc=7`, executa o notebook e grava os graficos.
+
+```bash
+./scripts/run_full_monza.sh
+```
+
+Para rodar em background com log automatico:
+
+```bash
+./scripts/run_full_monza.sh --background
+tail -f rerun_full_*.log
+```
+
+Variaveis uteis:
+
+```bash
+GLOBAL_ROUNDS=50 DEVICE_ID=0 ./scripts/run_full_monza.sh --background
+```
+
+Defaults relevantes para `malicious_label`:
+
+| Variável | Default | Efeito |
+|---|---:|---|
+| `ROUND_INIT_ATK` | `5` | rounds iniciais sem ataque para pré-treino/warm-up limpo |
+| `DUMP_START_ROUND` | `ROUND_INIT_ATK + 1` | primeiro round salvo no dataset dos detectores |
+| `PUBLIC_VAL_DIR` | `PFLlibMonza/dataset/MNIST/public_val` | validação pública limpa usada nas features contextuais, separada do `test/` |
+
 ## Pipeline (3 passos)
 
 ### Passo 1 — Gerar dataset rodando FL com dump
 
-Em `PFLlibMonza/system/`, rodar simulação FL com `--dump_state_dicts <out_dir>`. Cada update de cliente em cada round vira um `.safetensors + .json` na pasta de dump.
+Em `PFLlibMonza/system/`, rodar simulação FL com `--dump_state_dicts <out_dir>` e `--dump_start_round 5`. Cada update de cliente salvo vira um `.safetensors + .json`; cada round salvo também grava `global_rXXX.safetensors` para calcular `delta = local - global`.
 
 ```bash
 cd PFLlibMonza/system
 ../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 5 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
-    --dump_state_dicts ../../state_dicts_monza_cnn_mnist
+    -ria 5 \
+    --dump_state_dicts ../../state_dicts_monza_cnn_mnist \
+    --dump_start_round 5
 cd ../..
 ```
 
@@ -90,7 +119,9 @@ cd ../..
 | `-cc 5` | sem defesa (modo "gerar dataset puro") |
 | `-gr 50` | 50 rounds |
 | `-rfake 1` | 100% chance do malicioso atacar a cada round |
+| `-ria 5` | ativa ataques só depois do warm-up limpo |
 | `--dump_state_dicts <dir>` | salva updates como `r{round:03d}_c{client:03d}_{type}.safetensors + .json` |
+| `--dump_start_round 5` | começa a salvar após o warm-up e inclui `global_rXXX.safetensors` |
 
 **Tempo**: ~15-25 min em RTX 5060 Ti. **Tamanho**: ~12 GB (FedAvgCNN ~580k params × 5100 amostras).
 
@@ -107,19 +138,20 @@ Dois detectores em paralelo (paradigmas distintos pra comparação):
 
 #### 2a — Detector DistilBERT+LoRA
 
-> O preprocess do DistilBERT usa ordem canonizada das camadas. Depois de atualizar o código, retreine o artefato DistilBERT antes de comparar `cc=6`, `cc=9` ou `cc=10`.
+> O preprocess do DistilBERT usa ordem canonizada das camadas. Depois de atualizar o código, retreine o artefato DistilBERT antes de comparar `cc=6`.
 
 ```bash
 STATE_DICTS_DIR=./state_dicts_monza_cnn_mnist \
+PUBLIC_VAL_DIR=./PFLlibMonza/dataset/MNIST/public_val \
 FINAL_MODEL_DIR=./detector_monza_cnn_mnist \
 RUN_DIR=./detector_runs/monza_cnn_mnist \
 .venv/bin/python -u src/detector.py
 ```
 
-**Tempo**: ~15-30 min. **Saída**: `detector_monza_cnn_mnist/` (~3 MB com adapter LoRA + classifier head + `metrics.json`).
+**Tempo**: ~15-30 min. **Saída**: `detector_monza_cnn_mnist/` com adapter LoRA, `hybrid_head.pt`, `context_scaler.pkl` e `metrics.json`.
 
 **Aceite**:
-- `adapter_model.safetensors` deve ter ~3 MB (não 593 KB — se for menor, o head não foi salvo, ver bugfix abaixo).
+- `adapter_model.safetensors`, `hybrid_head.pt`, `context_scaler.pkl` e `metrics.json` devem existir.
 - `metrics.json` com `default_argmax.f1` ≥ 0.80.
 - `metrics.json` com `default_argmax.by_type` para comparar FPR/recall por tipo de ataque contra o MLP.
 
@@ -127,81 +159,43 @@ RUN_DIR=./detector_runs/monza_cnn_mnist \
 
 ```bash
 STATE_DICTS_DIR=./state_dicts_monza_cnn_mnist \
+PUBLIC_VAL_DIR=./PFLlibMonza/dataset/MNIST/public_val \
 ARTIFACTS_DIR=./detector_mlp_monza_cnn_mnist \
 .venv/bin/python -u src/detector_mlp.py
 ```
 
 **Tempo**: ~30 segundos (early stop em ~epoch 17). **Saída**: `detector_mlp_monza_cnn_mnist/` (~80 KB).
 
-### Passo 3 — Defesa em produção (cc=6 DistilBERT / cc=7 MLP / cc=8 MLP+validação / cc=9 ensemble / cc=10 targeted label-flip)
+### Passo 3 — Defesa em produção (`cc=2` / `cc=3` / `cc=6` / `cc=7`)
 
-Re-rodar FL com defesa ativada (`-cc 6`, `-cc 7`, `-cc 8`, `-cc 9` ou `-cc 10`) apontando pros detectores treinados:
+Re-rodar FL com defesa ativada. `cc=2` e `cc=3` são baselines sem detector treinado; `cc=6` e `cc=7` usam os artefatos treinados:
 
 ```bash
 cd PFLlibMonza/system
+# Cluster cosseno
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+    -cc 2 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
+# Cosseno + score
+../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
+    -cc 3 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
 # DistilBERT
 ../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-    -cc 6 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
-    --detector_dir ../../detector_monza_cnn_mnist
+    -cc 6 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 -ria 5 \
+    --detector_dir ../../detector_monza_cnn_mnist \
+    --bert_threshold_key threshold_label_fpr05
 # MLP
 ../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-    -cc 7 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
-    --detector_dir ../../detector_mlp_monza_cnn_mnist
-# MLP + validacao publica (recomendado para label flip)
-../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-    -cc 8 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
+    -cc 7 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 -ria 5 \
     --detector_dir ../../detector_mlp_monza_cnn_mnist \
-    --val_check_samples 256 --val_check_batch_size 128 \
-    --val_check_min_delta 0.02 --val_check_mad_k 3.0
-# MLP + DistilBERT confirmado pelo label-flip check
-../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-    -cc 9 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
-    --bert_detector_dir ../../detector_monza_cnn_mnist \
-    --mlp_detector_dir ../../detector_mlp_monza_cnn_mnist \
-    --val_check_samples 256 --val_check_batch_size 128 \
-    --lf_check_root_lr 0.01 --lf_check_root_steps 5 \
-    --lf_check_min_loss_delta 0.02 --lf_check_mad_k 3.0 \
-    --lf_check_max_final_cos 0.0
-# opcional para teste agressivo de label flip:
-# adicione --cc9_lf_standalone para permitir que o label-flip check remova sem confirmação do DistilBERT
-# DistilBERT + MLP + targeted label-flip focado em malicious_label
-../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-    -cc 10 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
-    --bert_detector_dir ../../detector_monza_cnn_mnist \
-    --mlp_detector_dir ../../detector_mlp_monza_cnn_mnist \
-    --val_check_samples 512 --val_check_batch_size 128 \
-    --target_lf_min_score 2.0 \
-    --target_lf_min_margin_delta 0.05 \
-    --target_lf_min_loss_delta -0.10 \
-    --target_lf_mad_k 2.5 \
-    --target_lf_max_reject_fraction 0.30 \
-    --target_lf_head_weight 0.35 \
-    --target_lf_margin_weight 1.0 \
-    --target_lf_loss_weight 0.50 \
-    --target_lf_target_prob_weight 0.50
+    --mlp_threshold_key threshold_label_fpr05
 cd ../..
 ```
 
 **Saídas**:
-- `PFLlibMonza/system/fpr_frr_results_{6,7,8,9,10}.csv`: FPR/FRR global por round.
-- `PFLlibMonza/system/cc_detail_results_{6,7,8,9,10}.csv`: decisão por cliente/round, com `AttackType`, hits e scores.
-- `PFLlibMonza/system/cc_type_results_{6,7,8,9,10}.csv`: FPR benigno e recall por tipo de ataque, incluindo `malicious_label`.
+- `PFLlibMonza/system/fpr_frr_results_{2,3,6,7}.csv`: FPR/FRR global por round.
+- `PFLlibMonza/system/cc_detail_results_{6,7}.csv`: decisão por cliente/round, com `AttackType`, hits e scores.
+- `PFLlibMonza/system/cc_type_results_{6,7}.csv`: FPR benigno e recall por tipo de ataque, incluindo `malicious_label`.
 Todos incluem `RunID`; use sempre o último `RunID` para não misturar execuções.
-
-### Passo 3b (opcional) — Baselines do PFLlib
-
-Pra comparar com defesas existentes (cosseno, cluster):
-
-```bash
-cd PFLlibMonza/system
-# Cluster cosseno (cc=2)
-../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-    -cc 2 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
-# Cosseno + score (cc=3)
-../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-    -cc 3 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
-cd ../..
-```
 
 ---
 
@@ -211,7 +205,7 @@ cd ../..
 
 ```bash
 cd PFLlibMonza/system
-for csv in fpr_frr_results_{2,3,6,7,8,9,10}.csv; do
+for csv in fpr_frr_results_{2,3,6,7}.csv; do
     [ -f "$csv" ] || continue
     echo "=== $csv ==="
     LC_NUMERIC=C awk -F, '
@@ -232,9 +226,9 @@ cd ../..
 .venv/bin/jupyter notebook notebook_monza_analysis.ipynb
 ```
 
-Gera todos os gráficos do projeto em um lugar: FPR/FRR por round, trade-off scatter, métricas offline dos detectores, FPR/recall por tipo de ataque dos CCs, foco em `malicious_label` e diagnóstico TargetLF do `cc=10`. O notebook carrega CSV antigo e novo, escolhe o último `RunID` completo quando existir e inclui `cc=8`/`cc=9`/`cc=10` automaticamente depois de gerar os CSVs correspondentes em `PFLlibMonza/system/`.
+Gera todos os gráficos do projeto em um lugar: FPR/FRR por round, trade-off scatter, métricas offline dos detectores, FPR/recall por tipo de ataque e foco em `malicious_label`. O notebook carrega CSV antigo e novo, escolhe o último `RunID` completo quando existir e compara `cc=2`, `cc=3`, `cc=6` e `cc=7`.
 
-Os PNGs são gerados no diretório raiz como `plot_*.png` e também em `analysis_outputs/`.
+Os PNGs são gerados somente em `analysis_outputs/`. O script completo também remove `plot_*.png` antigos da raiz para evitar confusão com resultados anteriores.
 
 Principais saídas:
 - `plot_fpr_frr_by_round.png`
@@ -242,28 +236,21 @@ Principais saídas:
 - `plot_detector_metrics.png`
 - `analysis_outputs/plot_cc_recall_by_attack_type.png`
 - `analysis_outputs/plot_cc_malicious_label_recall.png`
-- `analysis_outputs/plot_target_lf_gates_by_attack.png`
-- `analysis_outputs/plot_target_lf_scores_by_attack.png`
 
 ### Scripts opcionais
 
-O notebook acima já roda tudo. Estes scripts ficam como alternativa CLI:
+O notebook acima já roda tudo. Este script fica como alternativa CLI:
 
 ```bash
 .venv/bin/python scripts/plot_cc_attack_types.py \
     --system-dir PFLlibMonza/system \
     --out-dir analysis_outputs \
     --tail-rounds 30
-
-.venv/bin/python scripts/analyze_target_label_flip.py \
-    --detail-csv PFLlibMonza/system/cc_detail_results_10.csv \
-    --tail-rounds 30
 ```
 
 Olhe principalmente:
-- `malicious_label` com `Rate`/`TargetLFHitRate` acima de zero.
+- `malicious_label` com `Rate` acima de zero.
 - `benign` com `Rate` perto ou abaixo de `0.05`.
-- `TargetLFScore_mean`/`p95` e `TargetLFFinalDelta_mean`/`p95` de `malicious_label` maiores que benigno.
 
 ---
 
@@ -276,11 +263,11 @@ jpt/
 ├── RESULTS.md                   # bench atual: 4×2 grid de variantes
 ├── MONZA_RESULTS.md             # 🆕 resultados experimentais MONZA
 ├── HOWTO.md                     # 🆕 este arquivo
-├── notebook_monza_analysis.ipynb # 🆕 análise gráfica (cc=2/3/6/7 + cc=8/9/10 opcional)
+├── notebook_monza_analysis.ipynb # análise gráfica (cc=2/3/6/7)
 ├── BertModelsclassify.ipynb     # gerador local de fallback (não-MONZA)
-├── plot_*.png                   # 🆕 5 figuras geradas
+├── analysis_outputs/            # figuras e resumos gerados
 ├── src/
-│   ├── detector.py              # treina DistilBERT+LoRA (modules_to_save=['pre_classifier','classifier'])
+│   ├── detector.py              # treina DistilBERT+LoRA hibrido (pesos discretizados + features contextuais)
 │   ├── detector_mlp.py          # treina MLP+features
 │   ├── features.py              # 60 features estatisticas/espectrais (compativel com BaseHeadSplit do PFLlib)
 │   ├── bench_grid.py            # bench 4×2 standalone (não usa MONZA)
@@ -291,14 +278,14 @@ jpt/
 │   └── create_label_flip_train_mal.py # cria train_mal/ com label flip deterministico
 └── PFLlibMonza/                 # 🆕 fork do PFLlib (FL simulator)
     ├── system/
-    │   ├── main.py              # +args --dump_state_dicts, detectores e cc=8/9/10
+    │   ├── main.py              # +args --dump_state_dicts e defesas cc=2/3/6/7
     │   ├── flcore/
     │   │   ├── attack/attack.py # ataques zeros/random/shuffle/label
     │   │   ├── clients/         # clientmaliciousavg.py expõe last_attack_type
-    │   │   ├── servers/serveravg.py # +cases cc==6/7/8/9/10
+    │   │   ├── servers/serveravg.py # +cases cc==2/3/6/7
     │   │   ├── trainmodel/models.py # FedAvgCNN, VGG, etc
     │   │   └── detector/        # 🆕 cópia gêmea de cc.py, cc_mlp.py, fl_save.py, features.py
-    │   ├── fpr_frr_results_*.csv # outputs por defesa (cc=2,3,6,7,8,9,10)
+    │   ├── fpr_frr_results_*.csv # outputs por defesa (cc=2,3,6,7 no fluxo principal)
     │   └── run.sh
     └── dataset/                 # precisa existir para gerar/ler MNIST particionado
 ```
@@ -321,11 +308,13 @@ Dataset MNIST particionado pra `num_clients` errado. Edite `dataset/generate_MNI
 
 ### `cc=6` removendo todos os clientes (FPR=1.0)
 
-Bug histórico: `LoraConfig` em `detector.py` precisava `modules_to_save=['pre_classifier', 'classifier']` pra persistir o head treinado. Já corrigido. Se reaparecer:
+O `cc=6` atual usa DistilBERT híbrido: adapter LoRA + `hybrid_head.pt` + `context_scaler.pkl`. Se o artefato estiver incompleto ou antigo, re-treine:
 
 ```bash
-ls -la detector_monza_cnn_mnist/adapter_model.safetensors
-# Esperado: ~3 MB. Se < 1 MB, o head não foi salvo — re-treinar.
+ls -la detector_monza_cnn_mnist/adapter_model.safetensors \
+       detector_monza_cnn_mnist/hybrid_head.pt \
+       detector_monza_cnn_mnist/context_scaler.pkl \
+       detector_monza_cnn_mnist/metrics.json
 ```
 
 ### Disco insuficiente pra VGG/Cifar10

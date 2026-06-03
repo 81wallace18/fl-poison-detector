@@ -3,8 +3,8 @@
 Detector binário de **updates maliciosos** em Federated Learning. Recebe um `state_dict` de cliente FL (uma `FedAvgCNN` com ~580k pesos) e classifica como **benigno** ou **malicioso** antes da agregação.
 
 Duas abordagens implementadas e comparadas:
-- **`detector.py`** — DistilBERT + LoRA sobre os pesos discretizados em bins
-- **`detector_mlp.py`** — MLP simples sobre 60 features estatísticas/espectrais/espaciais extraídas dos pesos
+- **`detector.py`** — DistilBERT + LoRA sobre pesos discretizados + ramo tabular com features contextuais
+- **`detector_mlp.py`** — MLP sobre features estatísticas dos pesos + delta local-global + validação pública limpa
 
 ## TL;DR
 
@@ -19,24 +19,28 @@ MLP+features ganha por 0.10–0.15 F1 em todos os cenários.
 
 Validação posterior em FL real (PFLlibMonza, 100 clientes Dirichlet non-IID, 30 maliciosos):
 
-| cc | Defesa | FPR | FRR | |
-|---|---|---:|---:|---|
-| 2 | Cluster cosseno (PFLlib baseline) | 0.000 | 0.262 | |
-| 3 | Cosseno + score (PFLlib baseline) | 0.053 | 0.114 | |
-| 6 | NLP DistilBERT (este trabalho) | 0.112 | 0.114 | |
-| **7** | **MLP+features (este trabalho)** | **0.000** | **0.156** | 🏆 |
-| 8 | MLP+validação pública | experimental | experimental | pega label flip |
-| 9 | DistilBERT+MLP+label-flip check | experimental | experimental | comparação ensemble |
-| 10 | DistilBERT+MLP+targeted label-flip | experimental | experimental | voto DistilBERT/MLP/TargetLF, foco em malicious_label |
+| cc | Defesa | FPR | FRR |
+|---|---|---:|---:|
+| 6 | NLP DistilBERT | 0.112 | 0.114 |
+| **7** | **MLP+features** | **0.000** | **0.156** |
 
-MLP+features Pareto-supera os 2 baselines do PFLlib. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
+MLP+features ficou como melhor detector final no fluxo normalizado. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
 
 Documentação:
-- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=6/cc=7/cc=8/cc=9/cc=10)
+- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=2/cc=3/cc=6/cc=7)
 - [`MONZA_RESULTS.md`](MONZA_RESULTS.md) — resultados experimentais em FL real
 - [`RESULTS.md`](RESULTS.md) — bench original 4×2 (dataset sintético)
-- [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu (Fases 1-7 + nota `cc=8`)
-- [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das defesas MONZA (`cc=8/9/10` opcionais)
+- [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu
+- [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das defesas MONZA (`cc=2`/`cc=3`/`cc=6`/`cc=7`)
+
+Run completo MONZA do zero:
+
+```bash
+./scripts/run_full_monza.sh --background
+tail -f rerun_full_*.log
+```
+
+O run completo usa por padrão `ROUND_INIT_ATK=5` e `DUMP_START_ROUND=6`: os rounds iniciais fazem warm-up limpo, depois o dump salva cada update junto com o modelo global anterior do round. `cc=6` e `cc=7` usam `threshold_label_fpr05` para focar em `malicious_label` mantendo FPR benigno baixo. As features contextuais usam `PFLlibMonza/dataset/MNIST/public_val/`, separado do `test/` usado para avaliação.
 
 ## Quick start
 
@@ -52,7 +56,7 @@ Sempre executar a partir da **raiz do projeto** — paths como `state_dicts/`, `
 
 O ambiente Python é único: use sempre `.venv/` na raiz. MONZA também deve ser executado com essa venv (`../../.venv/bin/python` quando o cwd for `PFLlibMonza/system`).
 
-Nota sobre `malicious_label`: o runtime MONZA agora exige `PFLlibMonza/dataset/MNIST/train_mal/` para label flip real. Gere esse diretório com `scripts/create_train_mal.py`; resultados antigos de recall em `malicious_label` devem ser rerodados depois disso.
+Nota sobre `malicious_label`: o runtime MONZA agora exige `PFLlibMonza/dataset/MNIST/train_mal/` para label flip real. O script `scripts/run_full_monza.sh` cria esse diretório automaticamente; para criar manualmente, use `scripts/create_label_flip_train_mal.py`.
 
 ## Estrutura
 
@@ -67,13 +71,14 @@ Nota sobre `malicious_label`: o runtime MONZA agora exige `PFLlibMonza/dataset/M
 ├── src/
 │   ├── detector.py                       # DistilBERT+LoRA sobre pesos→bins
 │   ├── detector_mlp.py                   # MLP sobre features handcrafted
-│   ├── features.py                       # extrator de 60 features
+│   ├── features.py                       # extrator de 60 features de pesos
+│   ├── context_features.py               # delta local-global + validação pública
 │   ├── bench_grid.py                     # orquestrador 4×2
 │   ├── cc.py                             # ClientCheck DistilBERT standalone
 │   ├── cc_mlp.py                         # ClientCheckMLP — usado pelo MONZA
 │   └── fl_save.py                        # helper de dump de state_dicts
 └── PFLlibMonza/                          # fork PFLlib (FL simulator) integrado
-    └── system/flcore/detector/           # inferência MONZA: cc/cc_mlp/fl_save/features/validation_check
+    └── system/flcore/detector/           # inferência MONZA: cc/cc_mlp/fl_save/features
 ```
 
 Saídas geradas em runtime (todas no `.gitignore`, raiz do projeto):
@@ -81,7 +86,7 @@ Saídas geradas em runtime (todas no `.gitignore`, raiz do projeto):
 | Diretório | Conteúdo |
 |---|---|
 | `state_dicts/` ou `state_dicts_grid/{variante}/` | `.safetensors` + `.json` por amostra |
-| `detector_final/` | Modelo DistilBERT+LoRA treinado + `metrics.json` |
+| `detector_final/` | Modelo DistilBERT+LoRA híbrido treinado + scaler contextual + `metrics.json` |
 | `detector_mlp_artifacts/` | MLP + scaler + `feature_names.json` + `report.json` |
 | `detector_grid_runs/{variante}/{detector}/` | Logs e artefatos por run do grid |
 | `mnist_data/` | Cache do MNIST (baixado pelo `bench_grid`) |
@@ -90,11 +95,12 @@ Saídas geradas em runtime (todas no `.gitignore`, raiz do projeto):
 
 ### `detector.py`
 
-Pipeline DistilBERT+LoRA:
+Pipeline DistilBERT+LoRA híbrido:
 
 1. `preprocess_weights(state_dict)` — ordena camadas de forma canônica, pega tensores com `'weight'` no nome, normaliza cada um por quantis (q5/q95) com clamp em [0, 1], concatena, faz **pooling estratificado** via `torch.linspace(0, n-1, 512)` (em vez de truncamento), discretiza em 10000 bins (PAD_ID=0 reservado).
-2. `tokenize_function` monta `input_ids` + `attention_mask` (1 para tokens não-PAD).
-3. `build_and_train(seed)` — DistilBERT base + LoRA `r=8` em `q_lin`/`v_lin`. Treino: 15 epochs, lr=2e-4, weight_decay=0.01, scheduler cosine, warmup 6%, batch=16. Early stopping `patience=7` em F1.
+2. `extract_context_features(...)` monta sinais comportamentais para `malicious_label`: delta local-global, deltas da cabeça/classificador e métricas em validação pública MNIST limpa.
+3. `tokenize_function` monta `input_ids` + `attention_mask` (1 para tokens não-PAD); as features contextuais entram em paralelo, normalizadas com `StandardScaler`.
+4. `build_and_train(seed)` — DistilBERT base + LoRA `r=8` em `q_lin`/`v_lin`; o vetor `[CLS]` é concatenado com um ramo tabular (`LayerNorm -> MLP`) antes da classificação. Treino: 15 epochs, lr=2e-4, weight_decay=0.01, scheduler cosine, warmup 6%, batch=16.
 4. `tune_threshold(logits, labels)` — sweep de 200 thresholds em `(logit_mal − logit_ben)`, escolhe o que maximiza F1. Tunado in-sample no eval — métrica é otimista mas marginal.
 5. `breakdown_by_type` — recall por tipo de ataque (`zeros`, `random`, `shuffle`, `noise`).
 
