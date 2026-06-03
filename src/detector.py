@@ -128,9 +128,15 @@ def tokenize_function(examples):
 
 
 def compute_metrics(eval_pred):
-    logits, labels = eval_pred
+    logits = getattr(eval_pred, 'predictions', None)
+    labels = getattr(eval_pred, 'label_ids', None)
+    if logits is None or labels is None:
+        logits, labels = eval_pred
+    if isinstance(logits, (tuple, list)):
+        logits = logits[0]
     if isinstance(labels, (tuple, list)):
         labels = labels[0]
+    labels = np.asarray(labels)
     predictions = np.argmax(logits, axis=-1)
     out = {
         'accuracy': _accuracy.compute(predictions=predictions, references=labels)['accuracy'],
@@ -377,6 +383,7 @@ def build_and_train(seed: int, tokenized_train, tokenized_eval, run_dir: str):
         report_to='none',
         seed=seed,
         remove_unused_columns=False,
+        label_names=['labels', 'label_targets'],
     )
     trainer = Trainer(
         model=model,
