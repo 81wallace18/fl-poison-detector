@@ -27,6 +27,7 @@ from sklearn.preprocessing import StandardScaler
 from tqdm.auto import tqdm
 from transformers import (
     AutoModel,
+    EarlyStoppingCallback,
     Trainer,
     TrainingArguments,
     set_seed,
@@ -50,6 +51,12 @@ STATE_DICTS_DIR = os.environ.get('STATE_DICTS_DIR', 'state_dicts')
 PUBLIC_VAL_DIR = os.environ.get('PUBLIC_VAL_DIR', '')
 OVERSAMPLE_LABEL_FACTOR = max(1, int(os.environ.get('OVERSAMPLE_LABEL_FACTOR', '1')))
 LABEL_LOSS_WEIGHT = float(os.environ.get('LABEL_LOSS_WEIGHT', '1.0'))
+BERT_EPOCHS = float(os.environ.get('BERT_EPOCHS', '15'))
+BERT_EARLY_STOPPING_PATIENCE = int(os.environ.get('BERT_EARLY_STOPPING_PATIENCE', '3'))
+BERT_TRAIN_BATCH_SIZE = int(os.environ.get('BERT_TRAIN_BATCH_SIZE', '16'))
+BERT_EVAL_BATCH_SIZE = int(os.environ.get('BERT_EVAL_BATCH_SIZE', '16'))
+BERT_LEARNING_RATE = float(os.environ.get('BERT_LEARNING_RATE', '2e-4'))
+BERT_MAX_BENIGN_FPR = float(os.environ.get('BERT_MAX_BENIGN_FPR', '0.05'))
 TEST_SIZE = 0.2
 CALIB_SIZE = 0.2
 DEV_SIZE = 0.2
@@ -146,7 +153,7 @@ def compute_metrics(eval_pred):
     }
     if _metric_types is not None and len(_metric_types) == len(labels):
         label_fpr05 = tune_threshold_with_constraint(
-            logits, labels, list(_metric_types), max_benign_fpr=0.05, objective='label_recall'
+            logits, labels, list(_metric_types), max_benign_fpr=BERT_MAX_BENIGN_FPR, objective='label_recall'
         )
         out['label_recall_fpr05'] = label_fpr05['malicious_label_recall']
         out['benign_fpr_at_label_fpr05'] = label_fpr05['benign_fpr']
@@ -366,10 +373,10 @@ def build_and_train(seed: int, tokenized_train, tokenized_eval, run_dir: str):
 
     training_args = TrainingArguments(
         output_dir=run_dir,
-        num_train_epochs=15,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
-        learning_rate=2e-4,
+        num_train_epochs=BERT_EPOCHS,
+        per_device_train_batch_size=BERT_TRAIN_BATCH_SIZE,
+        per_device_eval_batch_size=BERT_EVAL_BATCH_SIZE,
+        learning_rate=BERT_LEARNING_RATE,
         weight_decay=0.01,
         lr_scheduler_type='cosine',
         warmup_ratio=0.06,
@@ -385,14 +392,24 @@ def build_and_train(seed: int, tokenized_train, tokenized_eval, run_dir: str):
         remove_unused_columns=False,
         label_names=['labels', 'label_targets'],
     )
+    callbacks = []
+    if BERT_EARLY_STOPPING_PATIENCE > 0:
+        callbacks.append(EarlyStoppingCallback(early_stopping_patience=BERT_EARLY_STOPPING_PATIENCE))
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=tokenized_train,
         eval_dataset=tokenized_eval,
         compute_metrics=compute_metrics,
+        callbacks=callbacks,
     )
-    trainer.train()
+    try:
+        trainer.train()
+    except KeyboardInterrupt:
+        print(
+            '\n[WARN] Treino DistilBERT interrompido; '
+            'avaliando e salvando o checkpoint/modelo parcial atual.'
+        )
     pred_output = trainer.predict(tokenized_eval)
     return trainer, pred_output
 
@@ -658,6 +675,13 @@ def main() -> None:
 
     os.makedirs(FINAL_MODEL_DIR, exist_ok=True)
     print(f'\n========== Treinando modelo (seed={MODEL_SEED}) ==========')
+    print(
+        'BERT config: '
+        f'epochs={BERT_EPOCHS} early_stop={BERT_EARLY_STOPPING_PATIENCE} '
+        f'batch={BERT_TRAIN_BATCH_SIZE}/{BERT_EVAL_BATCH_SIZE} lr={BERT_LEARNING_RATE} '
+        f'label_oversample={OVERSAMPLE_LABEL_FACTOR} label_loss_weight={LABEL_LOSS_WEIGHT} '
+        f'max_benign_fpr={BERT_MAX_BENIGN_FPR}'
+    )
     _metric_types = types_dev
     trainer, pred_output = build_and_train(
         MODEL_SEED, tokenized_train, tokenized_dev, RUN_DIR
@@ -672,10 +696,10 @@ def main() -> None:
         calib_labels = calib_labels[0]
     tuned = tune_threshold(calib_logits, calib_labels)
     fpr05 = tune_threshold_with_constraint(
-        calib_logits, calib_labels, types_calib, max_benign_fpr=0.05, objective='malicious_recall'
+        calib_logits, calib_labels, types_calib, max_benign_fpr=BERT_MAX_BENIGN_FPR, objective='malicious_recall'
     )
     label_fpr05 = tune_threshold_with_constraint(
-        calib_logits, calib_labels, types_calib, max_benign_fpr=0.05, objective='label_recall'
+        calib_logits, calib_labels, types_calib, max_benign_fpr=BERT_MAX_BENIGN_FPR, objective='label_recall'
     )
 
     _metric_types = None
@@ -707,7 +731,7 @@ def main() -> None:
     binary_scores_calib = calib_logits[:, 1] - calib_logits[:, 0]
     binary_scores_test = logits[:, 1] - logits[:, 0]
     label_head = tune_score_threshold_with_constraint(
-        calib_label_scores, calib_labels, types_calib, max_benign_fpr=0.05
+        calib_label_scores, calib_labels, types_calib, max_benign_fpr=BERT_MAX_BENIGN_FPR
     )
     label_head_preds = (label_scores > label_head['threshold']).astype(int)
     label_head_test = {
@@ -720,7 +744,7 @@ def main() -> None:
         'preds': label_head_preds,
     }
     combined_calib = tune_combined_thresholds(
-        binary_scores_calib, calib_label_scores, calib_labels, types_calib, max_benign_fpr=0.05
+        binary_scores_calib, calib_label_scores, calib_labels, types_calib, max_benign_fpr=BERT_MAX_BENIGN_FPR
     )
     combined_test = combined_metrics_from_thresholds(
         binary_scores_test,
@@ -774,8 +798,15 @@ def main() -> None:
                 'model_seed': MODEL_SEED,
                 'oversample_label_factor': OVERSAMPLE_LABEL_FACTOR,
                 'label_loss_weight': LABEL_LOSS_WEIGHT,
+                'bert_epochs': BERT_EPOCHS,
+                'bert_early_stopping_patience': BERT_EARLY_STOPPING_PATIENCE,
+                'bert_train_batch_size': BERT_TRAIN_BATCH_SIZE,
+                'bert_eval_batch_size': BERT_EVAL_BATCH_SIZE,
+                'bert_learning_rate': BERT_LEARNING_RATE,
+                'max_benign_fpr': BERT_MAX_BENIGN_FPR,
                 'hybrid_context_dim': N_CONTEXT_FEATURES,
                 'public_val_dir': PUBLIC_VAL_DIR,
+                'recommended_threshold_key': 'combined_label_fpr05',
                 'split_protocol': 'disjoint_client_train_dev_calib_test',
                 'best_selection': {
                     'metric': 'dev malicious_label recall under benign FPR <= 5%',
