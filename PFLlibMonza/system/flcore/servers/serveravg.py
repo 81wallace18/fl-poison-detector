@@ -54,13 +54,21 @@ class FedAvg(Server):
             if not detector_dir:
                 raise ValueError("cc=6 requer --detector_dir apontando pro modelo treinado (ex: jpt/detector_final/).")
             print(f"[cc=6] Carregando detector DistilBERT de {detector_dir}")
-            self.client_check = ClientCheck(detector_dir, threshold_key=getattr(args, 'bert_threshold_key', 'threshold_label_fpr05'))
+            self.client_check = ClientCheck(
+                detector_dir,
+                threshold_key=getattr(args, 'bert_threshold_key', 'threshold_label_fpr05'),
+                threshold_value=getattr(args, 'bert_threshold_value', None),
+            )
         elif self.cc == 7:
             detector_dir = getattr(args, 'detector_dir', '') or ''
             if not detector_dir:
                 raise ValueError("cc=7 requer --detector_dir apontando pro MLP artifacts dir (ex: jpt/detector_mlp_monza_cnn_mnist/).")
             print(f"[cc=7] Carregando detector MLP de {detector_dir}")
-            self.client_check = ClientCheckMLP(detector_dir, threshold_key=getattr(args, 'mlp_threshold_key', 'threshold_label_fpr05'))
+            self.client_check = ClientCheckMLP(
+                detector_dir,
+                threshold_key=getattr(args, 'mlp_threshold_key', 'threshold_label_fpr05'),
+                threshold_value=getattr(args, 'mlp_threshold_value', None),
+            )
 
         # select slow clients
         self.set_slow_clients()

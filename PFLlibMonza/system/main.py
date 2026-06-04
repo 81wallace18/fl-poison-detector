@@ -521,11 +521,15 @@ if __name__ == "__main__":
     parser.add_argument('--detector_dir', type=str, default='',
         help='Path do detector treinado. Usado em -cc 6 (DistilBERT) e -cc 7 (MLP).')
     parser.add_argument('--bert_threshold_key', type=str, default='threshold_label_fpr05',
-        choices=['tuned', 'threshold_fpr05', 'threshold_label_fpr05'],
+        choices=['tuned', 'threshold_fpr05', 'threshold_label_fpr05', 'combined_label_fpr05'],
         help='Chave de threshold do metrics.json usada pelo DistilBERT.')
+    parser.add_argument('--bert_threshold_value', type=float, default=None,
+        help='Threshold binario manual do DistilBERT. Se setado, sobrescreve --bert_threshold_key.')
     parser.add_argument('--mlp_threshold_key', type=str, default='threshold_label_fpr05',
-        choices=['tuned', 'threshold_fpr05', 'threshold_label_fpr05'],
+        choices=['tuned', 'threshold_fpr05', 'threshold_label_fpr05', 'combined_label_fpr05'],
         help='Chave de threshold do report.json usada pelo MLP.')
+    parser.add_argument('--mlp_threshold_value', type=float, default=None,
+        help='Threshold binario manual do MLP. Se setado, sobrescreve --mlp_threshold_key.')
     args = parser.parse_args()
 
     if not 0.0 <= args.rate_client_fake <= 1.0:

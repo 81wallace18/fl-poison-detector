@@ -80,6 +80,7 @@ class ClientCheckMLP:
         artifacts_dir: str | os.PathLike,
         device: str | None = None,
         threshold_key: str = 'threshold_label_fpr05',
+        threshold_value: float | None = None,
     ) -> None:
         self.artifacts_dir = Path(artifacts_dir)
         if device is None:
@@ -120,7 +121,11 @@ class ClientCheckMLP:
         with open(report_path) as f:
             report = json.load(f)
         combined = report.get('combined_label_fpr05')
-        if combined and 'binary_threshold' in combined and 'label_threshold' in combined:
+        if threshold_value is not None:
+            self.threshold = float(threshold_value)
+            self.threshold_key = 'manual'
+            self.decision_rule = 'manual_binary'
+        elif threshold_key == 'combined_label_fpr05' and combined and 'binary_threshold' in combined and 'label_threshold' in combined:
             self.threshold = float(combined['binary_threshold'])
             self.label_threshold = float(combined['label_threshold'])
             self.threshold_key = 'combined_label_fpr05'

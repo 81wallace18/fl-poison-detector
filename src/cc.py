@@ -127,6 +127,7 @@ class ClientCheck:
         device: str | None = None,
         use_tuned_threshold: bool = True,
         threshold_key: str = 'threshold_label_fpr05',
+        threshold_value: float | None = None,
     ) -> None:
         self.model_dir = Path(model_dir)
         if device is None:
@@ -206,14 +207,18 @@ class ClientCheck:
         self.threshold = None
         self.label_threshold = None
         self.decision_rule = 'binary'
-        if use_tuned_threshold:
+        if threshold_value is not None:
+            self.threshold = float(threshold_value)
+            self.threshold_key = 'manual'
+            self.decision_rule = 'manual_binary'
+        elif use_tuned_threshold:
             metrics_path = self.model_dir / 'metrics.json'
             if not metrics_path.exists():
                 raise FileNotFoundError(f"metrics.json ausente em {self.model_dir}")
             with open(metrics_path) as f:
                 m = json.load(f)
             combined = m.get('combined_label_fpr05')
-            if combined and 'binary_threshold' in combined and 'label_threshold' in combined:
+            if threshold_key == 'combined_label_fpr05' and combined and 'binary_threshold' in combined and 'label_threshold' in combined:
                 self.threshold = float(combined['binary_threshold'])
                 self.label_threshold = float(combined['label_threshold'])
                 self.threshold_key = 'combined_label_fpr05'
