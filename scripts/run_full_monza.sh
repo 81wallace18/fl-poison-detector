@@ -26,6 +26,18 @@ RUN_DIR="${RUN_DIR:-$ROOT/detector_runs/monza_cnn_mnist}"
 ANALYSIS_OUT="${ANALYSIS_OUT:-$ROOT/analysis_outputs}"
 PUBLIC_VAL_DIR="${PUBLIC_VAL_DIR:-$DATASET_DIR/$DATASET_NAME/public_val}"
 RUN_LOG="${RUN_LOG:-$ROOT/rerun_full_$(date +%Y%m%d_%H%M%S).log}"
+BERT_THRESHOLD_KEY="${BERT_THRESHOLD_KEY:-combined_label_fpr05}"
+BERT_THRESHOLD_VALUE="${BERT_THRESHOLD_VALUE:-}"
+BERT_EPOCHS="${BERT_EPOCHS:-8}"
+BERT_EARLY_STOPPING_PATIENCE="${BERT_EARLY_STOPPING_PATIENCE:-2}"
+BERT_OVERSAMPLE_LABEL_FACTOR="${BERT_OVERSAMPLE_LABEL_FACTOR:-4}"
+BERT_LABEL_LOSS_WEIGHT="${BERT_LABEL_LOSS_WEIGHT:-3.0}"
+BERT_MAX_BENIGN_FPR="${BERT_MAX_BENIGN_FPR:-0.05}"
+BERT_TRAIN_BATCH_SIZE="${BERT_TRAIN_BATCH_SIZE:-16}"
+BERT_EVAL_BATCH_SIZE="${BERT_EVAL_BATCH_SIZE:-16}"
+BERT_LEARNING_RATE="${BERT_LEARNING_RATE:-2e-4}"
+MLP_THRESHOLD_KEY="${MLP_THRESHOLD_KEY:-combined_label_fpr05}"
+MLP_THRESHOLD_VALUE="${MLP_THRESHOLD_VALUE:-}"
 
 export PUBLIC_VAL_DIR
 
@@ -109,6 +121,14 @@ PY
   log "Train DistilBERT detector"
   STATE_DICTS_DIR="$STATE_DICTS_DIR" \
   PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
+  OVERSAMPLE_LABEL_FACTOR="$BERT_OVERSAMPLE_LABEL_FACTOR" \
+  LABEL_LOSS_WEIGHT="$BERT_LABEL_LOSS_WEIGHT" \
+  BERT_EPOCHS="$BERT_EPOCHS" \
+  BERT_EARLY_STOPPING_PATIENCE="$BERT_EARLY_STOPPING_PATIENCE" \
+  BERT_MAX_BENIGN_FPR="$BERT_MAX_BENIGN_FPR" \
+  BERT_TRAIN_BATCH_SIZE="$BERT_TRAIN_BATCH_SIZE" \
+  BERT_EVAL_BATCH_SIZE="$BERT_EVAL_BATCH_SIZE" \
+  BERT_LEARNING_RATE="$BERT_LEARNING_RATE" \
   FINAL_MODEL_DIR="$BERT_DIR" \
   RUN_DIR="$RUN_DIR" \
     "$VENV_PY" -u src/detector.py
@@ -124,8 +144,16 @@ PY
   run_monza 3
 
   log "Run detector CCs"
-  run_monza 6 --detector_dir "$BERT_DIR" --bert_threshold_key threshold_label_fpr05
-  run_monza 7 --detector_dir "$MLP_DIR" --mlp_threshold_key threshold_label_fpr05
+  bert_args=(--detector_dir "$BERT_DIR" --bert_threshold_key "$BERT_THRESHOLD_KEY")
+  if [[ -n "$BERT_THRESHOLD_VALUE" ]]; then
+    bert_args+=(--bert_threshold_value "$BERT_THRESHOLD_VALUE")
+  fi
+  mlp_args=(--detector_dir "$MLP_DIR" --mlp_threshold_key "$MLP_THRESHOLD_KEY")
+  if [[ -n "$MLP_THRESHOLD_VALUE" ]]; then
+    mlp_args+=(--mlp_threshold_value "$MLP_THRESHOLD_VALUE")
+  fi
+  run_monza 6 "${bert_args[@]}"
+  run_monza 7 "${mlp_args[@]}"
 
   log "Execute notebook plots"
   "$JUPYTER" nbconvert \
@@ -140,6 +168,10 @@ PY
     --tail-rounds 30
   log "DONE"
 }
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
 
 if [[ "${1:-}" == "--background" ]]; then
   mkdir -p "$(dirname "$RUN_LOG")"
@@ -165,6 +197,18 @@ if [[ "${1:-}" == "--background" ]]; then
     RUN_DIR="$RUN_DIR" \
     ANALYSIS_OUT="$ANALYSIS_OUT" \
     PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
+    BERT_THRESHOLD_KEY="$BERT_THRESHOLD_KEY" \
+    BERT_THRESHOLD_VALUE="$BERT_THRESHOLD_VALUE" \
+    BERT_EPOCHS="$BERT_EPOCHS" \
+    BERT_EARLY_STOPPING_PATIENCE="$BERT_EARLY_STOPPING_PATIENCE" \
+    BERT_OVERSAMPLE_LABEL_FACTOR="$BERT_OVERSAMPLE_LABEL_FACTOR" \
+    BERT_LABEL_LOSS_WEIGHT="$BERT_LABEL_LOSS_WEIGHT" \
+    BERT_MAX_BENIGN_FPR="$BERT_MAX_BENIGN_FPR" \
+    BERT_TRAIN_BATCH_SIZE="$BERT_TRAIN_BATCH_SIZE" \
+    BERT_EVAL_BATCH_SIZE="$BERT_EVAL_BATCH_SIZE" \
+    BERT_LEARNING_RATE="$BERT_LEARNING_RATE" \
+    MLP_THRESHOLD_KEY="$MLP_THRESHOLD_KEY" \
+    MLP_THRESHOLD_VALUE="$MLP_THRESHOLD_VALUE" \
     RUN_LOG="$RUN_LOG" \
     "$0" >"$RUN_LOG" 2>&1 &
   printf 'Started PID %s\nLog: %s\n' "$!" "$RUN_LOG"
