@@ -85,12 +85,36 @@ Variaveis uteis:
 GLOBAL_ROUNDS=50 DEVICE_ID=0 ./scripts/run_full_monza.sh --background
 ```
 
+O run completo ja usa por padrao uma configuracao estavel:
+
+- BERT (`cc=6`): `BERT_THRESHOLD_KEY=combined_label_fpr05`, usando score binario + head auxiliar de `malicious_label`.
+- MLP (`cc=7`): `MLP_THRESHOLD_KEY=combined_label_fpr05`, usando o threshold calibrado da rodada para evitar FPR explosivo entre retreinos.
+
+Para sobrescrever manualmente:
+
+```bash
+BERT_THRESHOLD_KEY=combined_label_fpr05 \
+MLP_THRESHOLD_KEY=combined_label_fpr05 \
+./scripts/run_full_monza.sh --background
+```
+
+Use esse formato apenas se quiser sobrescrever os defaults.
+
 Defaults relevantes para `malicious_label`:
 
 | Variável | Default | Efeito |
 |---|---:|---|
 | `ROUND_INIT_ATK` | `5` | rounds iniciais sem ataque para pré-treino/warm-up limpo |
 | `DUMP_START_ROUND` | `ROUND_INIT_ATK + 1` | primeiro round salvo no dataset dos detectores |
+| `BERT_THRESHOLD_KEY` | `combined_label_fpr05` | chave do `metrics.json` usada no `cc=6` quando `BERT_THRESHOLD_VALUE` esta vazio |
+| `BERT_THRESHOLD_VALUE` | vazio | se definido, threshold manual para `cc=6`; sobrescreve `BERT_THRESHOLD_KEY` |
+| `BERT_EPOCHS` | `8` | limite de epochs do DistilBERT no run completo |
+| `BERT_EARLY_STOPPING_PATIENCE` | `2` | para o DistilBERT quando `malicious_label` em dev nao melhora |
+| `BERT_OVERSAMPLE_LABEL_FACTOR` | `4` | replica amostras `malicious_label` no treino do DistilBERT |
+| `BERT_LABEL_LOSS_WEIGHT` | `3.0` | peso da head auxiliar especializada em `malicious_label` |
+| `BERT_MAX_BENIGN_FPR` | `0.05` | limite de FPR benigno para thresholds calibrados do DistilBERT |
+| `MLP_THRESHOLD_KEY` | `combined_label_fpr05` | chave do `report.json` usada no `cc=7` quando `MLP_THRESHOLD_VALUE` esta vazio |
+| `MLP_THRESHOLD_VALUE` | vazio | se definido, threshold manual para `cc=7`; sobrescreve `--mlp_threshold_key` |
 | `PUBLIC_VAL_DIR` | `PFLlibMonza/dataset/MNIST/public_val` | validação pública limpa usada nas features contextuais, separada do `test/` |
 
 ## Pipeline (3 passos)
@@ -145,15 +169,20 @@ STATE_DICTS_DIR=./state_dicts_monza_cnn_mnist \
 PUBLIC_VAL_DIR=./PFLlibMonza/dataset/MNIST/public_val \
 FINAL_MODEL_DIR=./detector_monza_cnn_mnist \
 RUN_DIR=./detector_runs/monza_cnn_mnist \
+BERT_EPOCHS=8 \
+BERT_EARLY_STOPPING_PATIENCE=2 \
+OVERSAMPLE_LABEL_FACTOR=4 \
+LABEL_LOSS_WEIGHT=3.0 \
 .venv/bin/python -u src/detector.py
 ```
 
-**Tempo**: ~15-30 min. **Saída**: `detector_monza_cnn_mnist/` com adapter LoRA, `hybrid_head.pt`, `context_scaler.pkl` e `metrics.json`.
+**Tempo**: ~15-30 min com GPU; em CPU pode levar horas. **Saída**: `detector_monza_cnn_mnist/` com adapter LoRA, `hybrid_head.pt`, `context_scaler.pkl`, `score_diagnostics.csv` e `metrics.json`.
 
 **Aceite**:
 - `adapter_model.safetensors`, `hybrid_head.pt`, `context_scaler.pkl` e `metrics.json` devem existir.
-- `metrics.json` com `default_argmax.f1` ≥ 0.80.
-- `metrics.json` com `default_argmax.by_type` para comparar FPR/recall por tipo de ataque contra o MLP.
+- `metrics.json.recommended_threshold_key` deve apontar para `combined_label_fpr05`.
+- Comparar `threshold_label_fpr05`, `label_head_fpr05` e `combined_label_fpr05`; para usar no `cc=6`, priorize `combined_label_fpr05` se mantiver FPR benigno baixo.
+- `score_diagnostics.csv` deve existir para inspecionar separacao entre benignos e `malicious_label`.
 
 #### 2b — Detector MLP (60 features handcrafted)
 
@@ -182,12 +211,12 @@ cd PFLlibMonza/system
 ../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 6 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 -ria 5 \
     --detector_dir ../../detector_monza_cnn_mnist \
-    --bert_threshold_key threshold_label_fpr05
+    --bert_threshold_key combined_label_fpr05
 # MLP
 ../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
     -cc 7 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 -ria 5 \
     --detector_dir ../../detector_mlp_monza_cnn_mnist \
-    --mlp_threshold_key threshold_label_fpr05
+    --mlp_threshold_key combined_label_fpr05
 cd ../..
 ```
 
@@ -196,6 +225,32 @@ cd ../..
 - `PFLlibMonza/system/cc_detail_results_{6,7}.csv`: decisão por cliente/round, com `AttackType`, hits e scores.
 - `PFLlibMonza/system/cc_type_results_{6,7}.csv`: FPR benigno e recall por tipo de ataque, incluindo `malicious_label`.
 Todos incluem `RunID`; use sempre o último `RunID` para não misturar execuções.
+
+### Passo 3b — Sweep curto de thresholds
+
+Depois de treinar os detectores, rode o sweep para escolher thresholds mais agressivos contra `malicious_label` sem retreinar BERT/MLP:
+
+```bash
+./scripts/sweep_monza_thresholds.sh --background
+tail -f threshold_sweep_*.log
+```
+
+Defaults:
+
+```bash
+BERT_THRESHOLDS="-0.45 -0.50 -0.55 -0.60 -0.65"
+MLP_THRESHOLDS="-1.80 -2.00 -2.20 -2.37 -2.55"
+```
+
+Saidas principais:
+
+- `analysis_outputs/threshold_sweep/threshold_sweep_summary.csv`
+- `analysis_outputs/threshold_sweep/plot_threshold_label_recall.png`
+- `analysis_outputs/threshold_sweep/plot_threshold_upload_fpr.png`
+- `analysis_outputs/threshold_sweep/plot_threshold_accuracy.png`
+- `analysis_outputs/threshold_sweep/plot_threshold_tradeoff.png`
+
+Escolha o menor threshold agressivo que mantenha `malicious_label recall >= 90%`, `UploadFPR <= 5%` e melhor acuracia final entre os candidatos validos.
 
 ---
 
@@ -306,9 +361,9 @@ jpt/
 
 Dataset MNIST particionado pra `num_clients` errado. Edite `dataset/generate_MNIST.py:13` (`num_clients = 100`) e re-rode `python generate_MNIST.py noniid - dir`. O `check()` em `dataset/utils/dataset_utils.py` regera automaticamente se `num_clients` divergir do `config.json`.
 
-### `cc=6` removendo todos os clientes (FPR=1.0)
+### `cc=6` removendo muitos clientes ou ruim em `malicious_label`
 
-O `cc=6` atual usa DistilBERT híbrido: adapter LoRA + `hybrid_head.pt` + `context_scaler.pkl`. Se o artefato estiver incompleto ou antigo, re-treine:
+O `cc=6` atual usa DistilBERT híbrido: adapter LoRA + `hybrid_head.pt` + `context_scaler.pkl` + head auxiliar para `malicious_label`. Se o artefato estiver incompleto, antigo, ou treinado antes das features contextuais, re-treine:
 
 ```bash
 ls -la detector_monza_cnn_mnist/adapter_model.safetensors \
@@ -316,6 +371,8 @@ ls -la detector_monza_cnn_mnist/adapter_model.safetensors \
        detector_monza_cnn_mnist/context_scaler.pkl \
        detector_monza_cnn_mnist/metrics.json
 ```
+
+Para diagnosticar, confira `detector_monza_cnn_mnist/score_diagnostics.csv`. Se os scores de benigno e `malicious_label` estiverem sobrepostos, reduza agressividade do threshold (`BERT_THRESHOLD_KEY=tuned`) ou rode sweep antes do MONZA completo.
 
 ### Disco insuficiente pra VGG/Cifar10
 

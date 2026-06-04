@@ -40,7 +40,14 @@ Run completo MONZA do zero:
 tail -f rerun_full_*.log
 ```
 
-O run completo usa por padrão `ROUND_INIT_ATK=5` e `DUMP_START_ROUND=6`: os rounds iniciais fazem warm-up limpo, depois o dump salva cada update junto com o modelo global anterior do round. `cc=6` e `cc=7` usam `threshold_label_fpr05` para focar em `malicious_label` mantendo FPR benigno baixo. As features contextuais usam `PFLlibMonza/dataset/MNIST/public_val/`, separado do `test/` usado para avaliação.
+Sweep curto de thresholds para melhorar `malicious_label` sem retreinar os detectores:
+
+```bash
+./scripts/sweep_monza_thresholds.sh --background
+tail -f threshold_sweep_*.log
+```
+
+O run completo usa por padrão `ROUND_INIT_ATK=5` e `DUMP_START_ROUND=6`: os rounds iniciais fazem warm-up limpo, depois o dump salva cada update junto com o modelo global anterior do round. `cc=6` e `cc=7` usam `combined_label_fpr05`, que combina score binario e head auxiliar de `malicious_label` com threshold calibrado na própria rodada, mantendo FPR benigno controlado. As features contextuais usam `PFLlibMonza/dataset/MNIST/public_val/`, separado do `test/` usado para avaliação.
 
 ## Quick start
 
@@ -100,9 +107,9 @@ Pipeline DistilBERT+LoRA híbrido:
 1. `preprocess_weights(state_dict)` — ordena camadas de forma canônica, pega tensores com `'weight'` no nome, normaliza cada um por quantis (q5/q95) com clamp em [0, 1], concatena, faz **pooling estratificado** via `torch.linspace(0, n-1, 512)` (em vez de truncamento), discretiza em 10000 bins (PAD_ID=0 reservado).
 2. `extract_context_features(...)` monta sinais comportamentais para `malicious_label`: delta local-global, deltas da cabeça/classificador e métricas em validação pública MNIST limpa.
 3. `tokenize_function` monta `input_ids` + `attention_mask` (1 para tokens não-PAD); as features contextuais entram em paralelo, normalizadas com `StandardScaler`.
-4. `build_and_train(seed)` — DistilBERT base + LoRA `r=8` em `q_lin`/`v_lin`; o vetor `[CLS]` é concatenado com um ramo tabular (`LayerNorm -> MLP`) antes da classificação. Treino: 15 epochs, lr=2e-4, weight_decay=0.01, scheduler cosine, warmup 6%, batch=16.
-4. `tune_threshold(logits, labels)` — sweep de 200 thresholds em `(logit_mal − logit_ben)`, escolhe o que maximiza F1. Tunado in-sample no eval — métrica é otimista mas marginal.
-5. `breakdown_by_type` — recall por tipo de ataque (`zeros`, `random`, `shuffle`, `noise`).
+4. `build_and_train(seed)` — DistilBERT base + LoRA `r=8` em `q_lin`/`v_lin`; o vetor `[CLS]` é concatenado com um ramo tabular (`LayerNorm -> MLP`) antes da classificação. O treino aceita `BERT_EPOCHS`, early stopping por `label_recall_fpr05`, oversampling de `malicious_label` e perda auxiliar ponderada.
+5. `tune_threshold(...)` e `tune_combined_thresholds(...)` — calibram thresholds para FPR benigno controlado; `combined_label_fpr05` aplica regra OR entre score binario e head especializada em `malicious_label`.
+6. `breakdown_by_type` — recall por tipo de ataque (`zeros`, `random`, `shuffle`, `malicious_label`).
 
 `MODEL_SEED=15880` foi escolhido em experimento de ensemble como o que dá melhor F1 individual. Persistência em `FINAL_MODEL_DIR` + `metrics.json`.
 
@@ -160,6 +167,11 @@ Notebook de exploração + geração ad-hoc de dataset:
 | `STATE_DICTS_DIR` | `detector.py`, `detector_mlp.py` | `state_dicts` | Pasta de leitura dos `.safetensors` |
 | `FINAL_MODEL_DIR` | `detector.py` | `./detector_final` | Pasta de saída do modelo DistilBERT |
 | `RUN_DIR` | `detector.py` | `./detector_runs/best` | `output_dir` do `Trainer` HF |
+| `BERT_EPOCHS` | `detector.py` | `15` | Limite de epochs do DistilBERT |
+| `BERT_EARLY_STOPPING_PATIENCE` | `detector.py` | `3` | Para quando `malicious_label` em dev nao melhora |
+| `OVERSAMPLE_LABEL_FACTOR` | `detector.py`, `detector_mlp.py` | `1` | Replica amostras `malicious_label` no treino |
+| `LABEL_LOSS_WEIGHT` | `detector.py`, `detector_mlp.py` | `1.0` | Peso da perda auxiliar de `malicious_label` |
+| `BERT_MAX_BENIGN_FPR` | `detector.py` | `0.05` | Limite de FPR benigno para thresholds calibrados |
 | `ARTIFACTS_DIR` | `detector_mlp.py` | `detector_mlp_artifacts` | Pasta de saída do MLP |
 | `GRID_N_SAMPLES_PER_CLASS` | `bench_grid.py` | `1000` | Tamanho de cada variante do grid |
 | `GRID_SKIP_DISTILBERT` | `bench_grid.py` | `0` | `1` pula DistilBERT (~3 min total só MLP) |
@@ -187,5 +199,5 @@ STATE_DICTS_DIR=meus_dados FINAL_MODEL_DIR=./meu_modelo .venv/bin/python src/det
 
 - **Apenas FedAvgCNN**: `features.py` e `detector.py` assumem 4 camadas com `weight` no nome (`conv1.0.weight`, `conv2.0.weight`, `fc1.0.weight`, `fc.weight`). Para outras arquiteturas, ajustar `LAYERS` em `features.py`.
 - **Detecção isolada por update**: não usa comparação entre clientes (Krum/Multi-Krum/FoolsGold) nem trajetória multi-round (FLDetector). Defesa complementar, não substituta.
-- **Threshold tunado in-sample**: `detector.py:tune_threshold` usa o eval set também pra escolher o threshold. Métrica tunada é otimista.
+- **Threshold ainda e sensivel a split**: `detector.py` separa dev/calib/test por clientes; use `score_diagnostics.csv` para validar se `combined_label_fpr05` generalizou antes de comparar `cc=6`.
 - **noise SNR alto é ceiling real**: contra benign treinado, ruído com SNR > 10 dB é ~indistinguível por construção.
