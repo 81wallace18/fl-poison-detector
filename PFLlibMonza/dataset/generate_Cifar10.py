@@ -21,6 +21,7 @@ DIRICHLET_ALPHA = 0.1
 TRAIN_RATIO = 0.75
 PUBLIC_VAL_RATIO = 0.05
 MIN_CLIENT_SAMPLES = 40
+MAX_PARTITION_ATTEMPTS = 1000
 SEED = 1
 
 
@@ -44,11 +45,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def dirichlet_partition(y: np.ndarray, rng: np.random.Generator, num_clients: int) -> list[np.ndarray]:
+    if num_clients * MIN_CLIENT_SAMPLES > len(y):
+        raise RuntimeError(
+            f"Particionamento impossivel: {num_clients} clientes x "
+            f"{MIN_CLIENT_SAMPLES} amostras minimas > {len(y)} amostras."
+        )
     class_indices = [np.where(y == c)[0] for c in range(NUM_CLASSES)]
     for indices in class_indices:
         rng.shuffle(indices)
 
-    while True:
+    for attempt in range(1, MAX_PARTITION_ATTEMPTS + 1):
         client_indices = [[] for _ in range(num_clients)]
         for indices in class_indices:
             proportions = rng.dirichlet(np.repeat(DIRICHLET_ALPHA, num_clients))
@@ -61,7 +67,13 @@ def dirichlet_partition(y: np.ndarray, rng: np.random.Generator, num_clients: in
             break
         print(
             f"Client data size does not meet the minimum requirement {MIN_CLIENT_SAMPLES}. "
-            "Try allocating again."
+            f"Try allocating again ({attempt}/{MAX_PARTITION_ATTEMPTS})."
+        )
+    else:
+        raise RuntimeError(
+            f"Nao foi possivel particionar CIFAR10 em {num_clients} clientes "
+            f"com minimo de {MIN_CLIENT_SAMPLES} amostras apos "
+            f"{MAX_PARTITION_ATTEMPTS} tentativas."
         )
 
     out = []
