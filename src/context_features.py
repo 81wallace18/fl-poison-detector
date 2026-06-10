@@ -115,12 +115,12 @@ def _head_features(
 
 
 class _FedAvgCNN(nn.Module):
-    def __init__(self):
+    def __init__(self, in_features: int = 1, dim: int = 1024, num_classes: int = NUM_CLASSES):
         super().__init__()
-        self.conv1 = nn.Sequential(nn.Conv2d(1, 32, 5), nn.ReLU(inplace=True), nn.MaxPool2d(2))
+        self.conv1 = nn.Sequential(nn.Conv2d(in_features, 32, 5), nn.ReLU(inplace=True), nn.MaxPool2d(2))
         self.conv2 = nn.Sequential(nn.Conv2d(32, 64, 5), nn.ReLU(inplace=True), nn.MaxPool2d(2))
-        self.fc1 = nn.Sequential(nn.Linear(1024, 512), nn.ReLU(inplace=True))
-        self.fc = nn.Linear(512, NUM_CLASSES)
+        self.fc1 = nn.Sequential(nn.Linear(dim, 512), nn.ReLU(inplace=True))
+        self.fc = nn.Linear(512, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv1(x)
@@ -140,6 +140,18 @@ def _canonical_model_state(state_dict: Mapping[str, torch.Tensor]) -> Dict[str, 
             new_key = 'fc.' + new_key[len('head.'):]
         out[new_key] = value.detach().cpu()
     return out
+
+
+def _model_shape_from_state(state_dict: Mapping[str, torch.Tensor]) -> Tuple[int, int, int]:
+    conv1 = state_dict.get('conv1.0.weight')
+    fc1 = state_dict.get('fc1.0.weight')
+    fc = state_dict.get('fc.weight')
+    if conv1 is None or fc1 is None or fc is None:
+        raise KeyError(
+            "State_dict incompatível com FedAvgCNN: esperado conv1.0.weight, "
+            "fc1.0.weight e fc.weight após canonicalização."
+        )
+    return int(conv1.shape[1]), int(fc1.shape[1]), int(fc.shape[0])
 
 
 @lru_cache(maxsize=4)
@@ -178,8 +190,10 @@ def _eval_state_dict(
     device: torch.device,
 ) -> Dict[str, np.ndarray | float]:
     X, y = _public_validation(public_val_dir)
-    model = _FedAvgCNN().to(device)
-    model.load_state_dict(_canonical_model_state(state_dict), strict=False)
+    canonical_state = _canonical_model_state(state_dict)
+    in_features, dim, num_classes = _model_shape_from_state(canonical_state)
+    model = _FedAvgCNN(in_features=in_features, dim=dim, num_classes=num_classes).to(device)
+    model.load_state_dict(canonical_state, strict=False)
     model.eval()
     loss_fn = nn.CrossEntropyLoss(reduction='none')
     losses: List[torch.Tensor] = []
