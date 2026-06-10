@@ -144,12 +144,13 @@ def _canonical_model_state(state_dict: Mapping[str, torch.Tensor]) -> Dict[str, 
 
 def _model_shape_from_state(state_dict: Mapping[str, torch.Tensor]) -> Tuple[int, int, int]:
     conv1 = state_dict.get('conv1.0.weight')
+    conv2 = state_dict.get('conv2.0.weight')
     fc1 = state_dict.get('fc1.0.weight')
     fc = state_dict.get('fc.weight')
-    if conv1 is None or fc1 is None or fc is None:
+    if conv1 is None or conv2 is None or fc1 is None or fc is None:
         raise KeyError(
             "State_dict incompatível com FedAvgCNN: esperado conv1.0.weight, "
-            "fc1.0.weight e fc.weight após canonicalização."
+            "conv2.0.weight, fc1.0.weight e fc.weight após canonicalização."
         )
     return int(conv1.shape[1]), int(fc1.shape[1]), int(fc.shape[0])
 
@@ -193,7 +194,7 @@ def _eval_state_dict(
     canonical_state = _canonical_model_state(state_dict)
     in_features, dim, num_classes = _model_shape_from_state(canonical_state)
     model = _FedAvgCNN(in_features=in_features, dim=dim, num_classes=num_classes).to(device)
-    model.load_state_dict(canonical_state, strict=False)
+    model.load_state_dict(canonical_state, strict=True)
     model.eval()
     loss_fn = nn.CrossEntropyLoss(reduction='none')
     losses: List[torch.Tensor] = []
