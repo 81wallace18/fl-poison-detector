@@ -148,6 +148,7 @@ PY
   "$VENV_PY" scripts/plot_cc_attack_types.py \
     --system-dir PFLlibMonza/system \
     --out-dir "$ANALYSIS_OUT" \
+    --dataset "$DATASET_NAME" \
     --tail-rounds 30
   cp "$SYSTEM_DIR"/fpr_frr_results_*.csv "$ANALYSIS_OUT"/
   cp "$SYSTEM_DIR"/cc_detail_results_*.csv "$ANALYSIS_OUT"/
