@@ -341,6 +341,7 @@ class FedAvg(Server):
                 if self.cc==3:
                     oi = time.time()
                     round_upload_ids = list(self.ids)
+                    round_removed_clients = []
                     client_scores = {}
                     if len(self.uploaded_models) < 2:
                         print("cc=3: menos de 2 uploads validos; pulando score neste round.")
@@ -365,6 +366,7 @@ class FedAvg(Server):
                                     if client_id in self.index_malicious:
                                         found += 1
                                     print(f"Removing client {client_id} with score {score:.4f} (below average)")
+                                    round_removed_clients.append(client_id)
                                     self.set_client_quarantine(client_id)
                                     del self.uploaded_models[idx]
                                     del self.ids[idx]
@@ -377,7 +379,7 @@ class FedAvg(Server):
                             if s > 0:
                                 self.uploaded_weights = [weight / s for weight in self.uploaded_weights]
                     detail_rows = self._build_cc_detail_rows(
-                        i, round_upload_ids, self.removed_clients,
+                        i, round_upload_ids, round_removed_clients,
                         reason='score_below_mean_minus_std',
                         scores=client_scores,
                     )
