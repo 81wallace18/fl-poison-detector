@@ -66,6 +66,7 @@ TEST_SIZE = 0.2
 CALIB_SIZE = 0.2
 DEV_SIZE = 0.2
 PUBLIC_VAL_DIR = os.environ.get('PUBLIC_VAL_DIR', '')
+DATASET_NAME = os.environ.get('DATASET_NAME', '')
 TOTAL_FEATURES = N_FEATURES + N_CONTEXT_FEATURES
 
 
@@ -691,6 +692,7 @@ def main() -> None:
     )
 
     report = {
+        'dataset_name': DATASET_NAME,
         'best_epoch': best_epoch,
         'best_selection': {
             'metric': 'dev malicious_label recall under benign FPR <= 5%',
@@ -775,6 +777,7 @@ def main() -> None:
             'dev_size': DEV_SIZE,
             'calib_size': CALIB_SIZE,
             'public_val_dir': PUBLIC_VAL_DIR,
+            'dataset_name': DATASET_NAME,
             'base_feature_dim': N_FEATURES,
             'context_feature_dim': N_CONTEXT_FEATURES,
         },

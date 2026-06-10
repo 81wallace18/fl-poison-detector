@@ -46,6 +46,10 @@ def _public_val_dir() -> str:
     return public_val_dir
 
 
+def _expected_dataset_name() -> str:
+    return os.environ.get('DATASET_NAME') or ''
+
+
 class _MLPDetector(nn.Module):
     """Replica EXATA da arquitetura em detector_mlp.py:60. Mesma ordem de layers."""
 
@@ -120,6 +124,14 @@ class ClientCheckMLP:
             raise FileNotFoundError(f"report.json ausente em {self.artifacts_dir}")
         with open(report_path) as f:
             report = json.load(f)
+        trained_dataset = report.get('dataset_name') or report.get('config', {}).get('dataset_name') or ''
+        expected_dataset = _expected_dataset_name()
+        if trained_dataset and expected_dataset and trained_dataset != expected_dataset:
+            raise ValueError(
+                f"Detector MLP treinado para dataset {trained_dataset!r}, "
+                f"mas o runtime esta usando {expected_dataset!r}. "
+                "Use um detector treinado para o mesmo dataset."
+            )
         combined = report.get('combined_label_fpr05')
         if threshold_value is not None:
             self.threshold = float(threshold_value)
