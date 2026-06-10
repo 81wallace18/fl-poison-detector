@@ -39,7 +39,7 @@ BERT_LEARNING_RATE="${BERT_LEARNING_RATE:-2e-4}"
 MLP_THRESHOLD_KEY="${MLP_THRESHOLD_KEY:-combined_label_fpr05}"
 MLP_THRESHOLD_VALUE="${MLP_THRESHOLD_VALUE:-}"
 
-export PUBLIC_VAL_DIR
+export PUBLIC_VAL_DIR DATASET_NAME
 
 log() {
   printf '\n[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -136,6 +136,7 @@ PY
   log "Train MLP detector"
   STATE_DICTS_DIR="$STATE_DICTS_DIR" \
   PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
+  DATASET_NAME="$DATASET_NAME" \
   ARTIFACTS_DIR="$MLP_DIR" \
     "$VENV_PY" -u src/detector_mlp.py
 

@@ -540,6 +540,7 @@ if __name__ == "__main__":
         raise ValueError("-cc suportado no fluxo normalizado: 2 cluster, 3 score, 5 dump/sem defesa, 6 DistilBERT, 7 MLP.")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
+    os.environ["DATASET_NAME"] = args.dataset
 
     if args.device == "cuda" and not torch.cuda.is_available():
         print("\ncuda is not avaiable.\n")

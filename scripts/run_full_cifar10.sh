@@ -61,6 +61,10 @@ main() {
     echo "run_full_cifar10.sh suporta apenas DATASET_NAME=Cifar10; recebido: $DATASET_NAME" >&2
     exit 1
   fi
+  if [[ "$MODEL" != "CNN" ]]; then
+    echo "run_full_cifar10.sh suporta apenas MODEL=CNN; recebido: $MODEL" >&2
+    exit 1
+  fi
 
   log "START CIFAR10"
   log "ROOT=$ROOT"
@@ -70,7 +74,8 @@ main() {
   log "Clean generated CIFAR10 artifacts"
   rm -rf \
     "$STATE_DICTS_DIR" \
-    "$MLP_DIR"
+    "$MLP_DIR" \
+    "$ANALYSIS_OUT"
   mkdir -p "$ANALYSIS_OUT"
   backup_dir="$ANALYSIS_OUT/pre_run_system_csv_backup_$(date +%Y%m%d_%H%M%S)"
   mkdir -p "$backup_dir"
