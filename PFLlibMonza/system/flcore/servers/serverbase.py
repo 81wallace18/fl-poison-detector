@@ -216,13 +216,15 @@ class Server(object):
         return torch.cat([p.detach().flatten() for p in model.parameters()])
     
     def calcular_gradiente_l2(self, modelo, lambda_l2=0.01):
-        # Sua implementação do cálculo do gradiente L2
-        gradiente_l2 = 0.0
+        total = 0.0
+        n_params = 0
         for parametro in modelo.parameters():
-            if parametro.grad is not None:
-                gradiente_l2 += torch.sum(parametro ** 2).item()
-        gradiente_l2 = lambda_l2 * gradiente_l2
-        return gradiente_l2
+            data = parametro.detach()
+            total += torch.sum(data ** 2).item()
+            n_params += data.numel()
+        if n_params == 0:
+            return 0.0
+        return lambda_l2 * (total / n_params)
 
     def calculate_similarity_scores(self):
         #Calcula a matriz de similaridade de cosseno entre todos os clientes e retorna a matriz + os scores médios de cada cliente.
@@ -244,9 +246,10 @@ class Server(object):
         #    print("  ".join([f"{x:0.6f}" for x in row])) 
         #Converter para NumPy
         similarity_matrix_np = similarity_matrix.cpu().numpy()
-        desvio_padrao = torch.std(similarity_matrix)
+        off_diagonal = similarity_matrix[~torch.eye(num_clients, dtype=torch.bool, device=similarity_matrix.device)]
+        desvio_padrao = torch.std(off_diagonal)
         grad=[]
-        if desvio_padrao < 0.01:
+        if desvio_padrao < 0.001:
     # Inicializar o dicionário para armazenar os gradientes dos clientes
             grad = {}
 
