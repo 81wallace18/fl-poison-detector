@@ -17,7 +17,12 @@ LOCAL_STEPS="${LOCAL_STEPS:-1}"
 TIMES="${TIMES:-1}"
 RATE_FAKE="${RATE_FAKE:-1}"
 ROUND_INIT_ATK="${ROUND_INIT_ATK:-5}"
+DIRICHLET_ALPHA="${DIRICHLET_ALPHA:-0.2}"
+# Dump (detector training) is decoupled from evaluation rounds/times so it stays small on disk.
+DUMP_GLOBAL_ROUNDS="${DUMP_GLOBAL_ROUNDS:-60}"
+DUMP_TIMES="${DUMP_TIMES:-1}"
 DUMP_START_ROUND="${DUMP_START_ROUND:-$((ROUND_INIT_ATK + 1))}"
+KEEP_DUMP="${KEEP_DUMP:-0}"
 
 STATE_DICTS_DIR="${STATE_DICTS_DIR:-$ROOT/state_dicts_monza_cnn_mnist}"
 BERT_DIR="${BERT_DIR:-$ROOT/detector_monza_cnn_mnist}"
@@ -45,22 +50,23 @@ log() {
   printf '\n[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
+# run_monza <cc> <nmal> <gr> <times> [extra main.py args...]
 run_monza() {
-  local cc="$1"
-  shift
-  log "Run cc=${cc}"
+  local cc="$1" nmal="$2" gr="$3" times="$4"
+  shift 4
+  log "Run cc=${cc} nmal=${nmal} gr=${gr} times=${times}"
   cd "$SYSTEM_DIR"
   "$VENV_PY" -u main.py \
     -m "$MODEL" \
     -data "$DATASET_NAME" \
-    -nmc "$NUM_MALICIOUS" \
+    -nmc "$nmal" \
     -nc "$NUM_CLIENTS" \
     -jr "$JOIN_RATIO" \
     -atk all \
     -ria "$ROUND_INIT_ATK" \
     -cc "$cc" \
-    -gr "$GLOBAL_ROUNDS" \
-    -t "$TIMES" \
+    -gr "$gr" \
+    -t "$times" \
     -ls "$LOCAL_STEPS" \
     -did "$DEVICE_ID" \
     -rfake "$RATE_FAKE" \
@@ -75,9 +81,11 @@ main() {
   log "GIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
   log "LOG=$RUN_LOG"
 
-  log "Clean generated artifacts"
+  log "Clean generated artifacts (and free old dumps from both datasets)"
   rm -rf \
     "$STATE_DICTS_DIR" \
+    "$ROOT/state_dicts_monza_cnn_mnist" \
+    "$ROOT/state_dicts_monza_cifar10_cnn" \
     "$BERT_DIR" \
     "$MLP_DIR" \
     "$RUN_DIR" \
@@ -98,10 +106,10 @@ print("gpu", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO
 print("pyarrow", pa.__version__, "PyExtensionType", hasattr(pa, "PyExtensionType"))
 PY
 
-	  log "Generate ${DATASET_NAME} partition"
+	  log "Generate ${DATASET_NAME} partition (alpha=${DIRICHLET_ALPHA})"
 	  rm -rf "$DATASET_DIR/$DATASET_NAME"
 	  cd "$DATASET_DIR"
-	  "$VENV_PY" generate_MNIST.py noniid - dir --num-clients "$NUM_CLIENTS"
+	  "$VENV_PY" generate_MNIST.py noniid - dir --num-clients "$NUM_CLIENTS" --dirichlet-alpha "$DIRICHLET_ALPHA"
 	  cd "$ROOT"
   "$VENV_PY" scripts/create_label_flip_train_mal.py \
     --dataset-dir "$DATASET_DIR/$DATASET_NAME" \
@@ -113,8 +121,9 @@ PY
 	    "$(find "$DATASET_DIR/$DATASET_NAME/public_val" -name '*.npz' | wc -l)" \
 	    "$(find "$DATASET_DIR/$DATASET_NAME/test" -name '*.npz' | wc -l)"
 
-  log "Dump MONZA state_dicts"
-  run_monza 5 --dump_state_dicts "$STATE_DICTS_DIR" --dump_start_round "$DUMP_START_ROUND"
+  log "Dump MONZA state_dicts (small, for detector training only)"
+  run_monza 5 "$NUM_MALICIOUS" "$DUMP_GLOBAL_ROUNDS" "$DUMP_TIMES" \
+    --dump_state_dicts "$STATE_DICTS_DIR" --dump_start_round "$DUMP_START_ROUND"
   find "$STATE_DICTS_DIR" -name '*.json' | wc -l
   du -sh "$STATE_DICTS_DIR"
 
@@ -140,9 +149,17 @@ PY
   ARTIFACTS_DIR="$MLP_DIR" \
     "$VENV_PY" -u src/detector_mlp.py
 
-  log "Run baseline CCs"
-  run_monza 2
-  run_monza 3
+  if [[ "$KEEP_DUMP" != "1" ]]; then
+    log "Free dump state_dicts (detectors trained)"
+    rm -rf "$STATE_DICTS_DIR"
+  fi
+
+  log "Run baselines (paper scenario, gr=${GLOBAL_ROUNDS} times=${TIMES})"
+  run_monza 5 0 "$GLOBAL_ROUNDS" "$TIMES"                 # clean (no malicious)
+  run_monza 5 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"  # without defense
+
+  log "Run MONZA cc=3"
+  run_monza 3 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"
 
   log "Run detector CCs"
   bert_args=(--detector_dir "$BERT_DIR" --bert_threshold_key "$BERT_THRESHOLD_KEY")
@@ -153,8 +170,8 @@ PY
   if [[ -n "$MLP_THRESHOLD_VALUE" ]]; then
     mlp_args+=(--mlp_threshold_value "$MLP_THRESHOLD_VALUE")
   fi
-  run_monza 6 "${bert_args[@]}"
-  run_monza 7 "${mlp_args[@]}"
+  run_monza 6 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${bert_args[@]}"
+  run_monza 7 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${mlp_args[@]}"
 
   log "Execute notebook plots"
   "$JUPYTER" nbconvert \
@@ -192,7 +209,11 @@ if [[ "${1:-}" == "--background" ]]; then
     TIMES="$TIMES" \
     RATE_FAKE="$RATE_FAKE" \
     ROUND_INIT_ATK="$ROUND_INIT_ATK" \
+    DIRICHLET_ALPHA="$DIRICHLET_ALPHA" \
+    DUMP_GLOBAL_ROUNDS="$DUMP_GLOBAL_ROUNDS" \
+    DUMP_TIMES="$DUMP_TIMES" \
     DUMP_START_ROUND="$DUMP_START_ROUND" \
+    KEEP_DUMP="$KEEP_DUMP" \
     STATE_DICTS_DIR="$STATE_DICTS_DIR" \
     BERT_DIR="$BERT_DIR" \
     MLP_DIR="$MLP_DIR" \

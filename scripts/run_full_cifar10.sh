@@ -16,15 +16,32 @@ LOCAL_STEPS="${LOCAL_STEPS:-1}"
 TIMES="${TIMES:-1}"
 RATE_FAKE="${RATE_FAKE:-1}"
 ROUND_INIT_ATK="${ROUND_INIT_ATK:-5}"
+DIRICHLET_ALPHA="${DIRICHLET_ALPHA:-0.2}"
+# Dump (detector training) is decoupled from evaluation rounds/times so it stays small on disk.
+DUMP_GLOBAL_ROUNDS="${DUMP_GLOBAL_ROUNDS:-60}"
+DUMP_TIMES="${DUMP_TIMES:-1}"
 DUMP_START_ROUND="${DUMP_START_ROUND:-$((ROUND_INIT_ATK + 1))}"
+KEEP_DUMP="${KEEP_DUMP:-0}"
 
 STATE_DICTS_DIR="${STATE_DICTS_DIR:-$ROOT/state_dicts_monza_cifar10_cnn}"
 MLP_DIR="${MLP_DIR:-$ROOT/detector_mlp_monza_cifar10_cnn}"
+BERT_DIR="${BERT_DIR:-$ROOT/detector_monza_cifar10_cnn}"
+RUN_DIR="${RUN_DIR:-$ROOT/detector_runs/monza_cifar10_cnn}"
 ANALYSIS_OUT="${ANALYSIS_OUT:-$ROOT/analysis_outputs_cifar10}"
 PUBLIC_VAL_DIR="${PUBLIC_VAL_DIR:-$DATASET_DIR/$DATASET_NAME/public_val}"
 RUN_LOG="${RUN_LOG:-$ROOT/rerun_cifar10_$(date +%Y%m%d_%H%M%S).log}"
 MLP_THRESHOLD_KEY="${MLP_THRESHOLD_KEY:-combined_label_fpr05}"
 MLP_THRESHOLD_VALUE="${MLP_THRESHOLD_VALUE:-}"
+BERT_THRESHOLD_KEY="${BERT_THRESHOLD_KEY:-combined_label_fpr05}"
+BERT_THRESHOLD_VALUE="${BERT_THRESHOLD_VALUE:-}"
+BERT_EPOCHS="${BERT_EPOCHS:-8}"
+BERT_EARLY_STOPPING_PATIENCE="${BERT_EARLY_STOPPING_PATIENCE:-2}"
+BERT_OVERSAMPLE_LABEL_FACTOR="${BERT_OVERSAMPLE_LABEL_FACTOR:-4}"
+BERT_LABEL_LOSS_WEIGHT="${BERT_LABEL_LOSS_WEIGHT:-3.0}"
+BERT_MAX_BENIGN_FPR="${BERT_MAX_BENIGN_FPR:-0.05}"
+BERT_TRAIN_BATCH_SIZE="${BERT_TRAIN_BATCH_SIZE:-16}"
+BERT_EVAL_BATCH_SIZE="${BERT_EVAL_BATCH_SIZE:-16}"
+BERT_LEARNING_RATE="${BERT_LEARNING_RATE:-2e-4}"
 
 export PUBLIC_VAL_DIR DATASET_NAME
 
@@ -32,22 +49,23 @@ log() {
   printf '\n[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
+# run_monza <cc> <nmal> <gr> <times> [extra main.py args...]
 run_monza() {
-  local cc="$1"
-  shift
-  log "Run cc=${cc}"
+  local cc="$1" nmal="$2" gr="$3" times="$4"
+  shift 4
+  log "Run cc=${cc} nmal=${nmal} gr=${gr} times=${times}"
   cd "$SYSTEM_DIR"
   "$VENV_PY" -u main.py \
     -m "$MODEL" \
     -data "$DATASET_NAME" \
-    -nmc "$NUM_MALICIOUS" \
+    -nmc "$nmal" \
     -nc "$NUM_CLIENTS" \
     -jr "$JOIN_RATIO" \
     -atk all \
     -ria "$ROUND_INIT_ATK" \
     -cc "$cc" \
-    -gr "$GLOBAL_ROUNDS" \
-    -t "$TIMES" \
+    -gr "$gr" \
+    -t "$times" \
     -ls "$LOCAL_STEPS" \
     -did "$DEVICE_ID" \
     -rfake "$RATE_FAKE" \
@@ -71,10 +89,14 @@ main() {
   log "GIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
   log "LOG=$RUN_LOG"
 
-  log "Clean generated CIFAR10 artifacts"
+  log "Clean generated CIFAR10 artifacts (and free old dumps from both datasets)"
   rm -rf \
     "$STATE_DICTS_DIR" \
+    "$ROOT/state_dicts_monza_cnn_mnist" \
+    "$ROOT/state_dicts_monza_cifar10_cnn" \
     "$MLP_DIR" \
+    "$BERT_DIR" \
+    "$RUN_DIR" \
     "$ANALYSIS_OUT"
   mkdir -p "$ANALYSIS_OUT"
   backup_dir="$ANALYSIS_OUT/pre_run_system_csv_backup_$(date +%Y%m%d_%H%M%S)"
@@ -106,10 +128,10 @@ print("torch", torch.__version__, "cuda", torch.cuda.is_available())
 print("gpu", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NONE")
 PY
 
-  log "Generate ${DATASET_NAME} partition"
+  log "Generate ${DATASET_NAME} partition (alpha=${DIRICHLET_ALPHA})"
   rm -rf "$DATASET_DIR/$DATASET_NAME"
   cd "$DATASET_DIR"
-  "$VENV_PY" generate_Cifar10.py noniid - dir --num-clients "$NUM_CLIENTS"
+  "$VENV_PY" generate_Cifar10.py noniid - dir --num-clients "$NUM_CLIENTS" --dirichlet-alpha "$DIRICHLET_ALPHA"
   cd "$ROOT"
   "$VENV_PY" scripts/create_label_flip_train_mal.py \
     --dataset-dir "$DATASET_DIR/$DATASET_NAME" \
@@ -121,10 +143,26 @@ PY
     "$(find "$DATASET_DIR/$DATASET_NAME/public_val" -name '*.npz' | wc -l)" \
     "$(find "$DATASET_DIR/$DATASET_NAME/test" -name '*.npz' | wc -l)"
 
-  log "Dump MONZA state_dicts"
-  run_monza 5 --dump_state_dicts "$STATE_DICTS_DIR" --dump_start_round "$DUMP_START_ROUND"
+  log "Dump MONZA state_dicts (small, for detector training only)"
+  run_monza 5 "$NUM_MALICIOUS" "$DUMP_GLOBAL_ROUNDS" "$DUMP_TIMES" \
+    --dump_state_dicts "$STATE_DICTS_DIR" --dump_start_round "$DUMP_START_ROUND"
   find "$STATE_DICTS_DIR" -name '*.json' | wc -l
   du -sh "$STATE_DICTS_DIR"
+
+  log "Train DistilBERT detector"
+  STATE_DICTS_DIR="$STATE_DICTS_DIR" \
+  PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
+  OVERSAMPLE_LABEL_FACTOR="$BERT_OVERSAMPLE_LABEL_FACTOR" \
+  LABEL_LOSS_WEIGHT="$BERT_LABEL_LOSS_WEIGHT" \
+  BERT_EPOCHS="$BERT_EPOCHS" \
+  BERT_EARLY_STOPPING_PATIENCE="$BERT_EARLY_STOPPING_PATIENCE" \
+  BERT_MAX_BENIGN_FPR="$BERT_MAX_BENIGN_FPR" \
+  BERT_TRAIN_BATCH_SIZE="$BERT_TRAIN_BATCH_SIZE" \
+  BERT_EVAL_BATCH_SIZE="$BERT_EVAL_BATCH_SIZE" \
+  BERT_LEARNING_RATE="$BERT_LEARNING_RATE" \
+  FINAL_MODEL_DIR="$BERT_DIR" \
+  RUN_DIR="$RUN_DIR" \
+    "$VENV_PY" -u src/detector.py
 
   log "Train MLP detector"
   STATE_DICTS_DIR="$STATE_DICTS_DIR" \
@@ -133,16 +171,29 @@ PY
   ARTIFACTS_DIR="$MLP_DIR" \
     "$VENV_PY" -u src/detector_mlp.py
 
-  log "Run baseline CCs"
-  run_monza 2
-  run_monza 3
+  if [[ "$KEEP_DUMP" != "1" ]]; then
+    log "Free dump state_dicts (detectors trained)"
+    rm -rf "$STATE_DICTS_DIR"
+  fi
 
-  log "Run MLP detector CC"
+  log "Run baselines (paper scenario, gr=${GLOBAL_ROUNDS} times=${TIMES})"
+  run_monza 5 0 "$GLOBAL_ROUNDS" "$TIMES"                 # clean (no malicious)
+  run_monza 5 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"  # without defense
+
+  log "Run MONZA cc=3"
+  run_monza 3 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"
+
+  log "Run detector CCs"
+  bert_args=(--detector_dir "$BERT_DIR" --bert_threshold_key "$BERT_THRESHOLD_KEY")
+  if [[ -n "$BERT_THRESHOLD_VALUE" ]]; then
+    bert_args+=(--bert_threshold_value "$BERT_THRESHOLD_VALUE")
+  fi
   mlp_args=(--detector_dir "$MLP_DIR" --mlp_threshold_key "$MLP_THRESHOLD_KEY")
   if [[ -n "$MLP_THRESHOLD_VALUE" ]]; then
     mlp_args+=(--mlp_threshold_value "$MLP_THRESHOLD_VALUE")
   fi
-  run_monza 7 "${mlp_args[@]}"
+  run_monza 6 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${bert_args[@]}"
+  run_monza 7 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${mlp_args[@]}"
 
   log "Write CLI summaries"
   "$VENV_PY" scripts/plot_cc_attack_types.py \
@@ -176,13 +227,29 @@ if [[ "${1:-}" == "--background" ]]; then
     TIMES="$TIMES" \
     RATE_FAKE="$RATE_FAKE" \
     ROUND_INIT_ATK="$ROUND_INIT_ATK" \
+    DIRICHLET_ALPHA="$DIRICHLET_ALPHA" \
+    DUMP_GLOBAL_ROUNDS="$DUMP_GLOBAL_ROUNDS" \
+    DUMP_TIMES="$DUMP_TIMES" \
     DUMP_START_ROUND="$DUMP_START_ROUND" \
+    KEEP_DUMP="$KEEP_DUMP" \
     STATE_DICTS_DIR="$STATE_DICTS_DIR" \
     MLP_DIR="$MLP_DIR" \
+    BERT_DIR="$BERT_DIR" \
+    RUN_DIR="$RUN_DIR" \
     ANALYSIS_OUT="$ANALYSIS_OUT" \
     PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
     MLP_THRESHOLD_KEY="$MLP_THRESHOLD_KEY" \
     MLP_THRESHOLD_VALUE="$MLP_THRESHOLD_VALUE" \
+    BERT_THRESHOLD_KEY="$BERT_THRESHOLD_KEY" \
+    BERT_THRESHOLD_VALUE="$BERT_THRESHOLD_VALUE" \
+    BERT_EPOCHS="$BERT_EPOCHS" \
+    BERT_EARLY_STOPPING_PATIENCE="$BERT_EARLY_STOPPING_PATIENCE" \
+    BERT_OVERSAMPLE_LABEL_FACTOR="$BERT_OVERSAMPLE_LABEL_FACTOR" \
+    BERT_LABEL_LOSS_WEIGHT="$BERT_LABEL_LOSS_WEIGHT" \
+    BERT_MAX_BENIGN_FPR="$BERT_MAX_BENIGN_FPR" \
+    BERT_TRAIN_BATCH_SIZE="$BERT_TRAIN_BATCH_SIZE" \
+    BERT_EVAL_BATCH_SIZE="$BERT_EVAL_BATCH_SIZE" \
+    BERT_LEARNING_RATE="$BERT_LEARNING_RATE" \
     RUN_LOG="$RUN_LOG" \
     "$0" >"$RUN_LOG" 2>&1 &
   printf 'Started PID %s\nLog: %s\n' "$!" "$RUN_LOG"
