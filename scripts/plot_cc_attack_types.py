@@ -12,16 +12,16 @@ import pandas as pd
 
 from _fpr_frr_io import load_fpr_frr as _load_fpr_frr_csv
 
-SELECTED_CCS = [2, 3, 7]
+SELECTED_CCS = [3, 6, 7]
 ATTACK_TYPES = ["malicious_label", "malicious_random", "malicious_shuffle", "malicious_zeros"]
 DEFENSE_LABELS = {
-    2: "cc=2 (cluster cosseno)",
     3: "cc=3 (cosseno+score)",
+    6: "cc=6 (NLP DistilBERT)",
     7: "cc=7 (MLP+features)",
 }
 COLORS = {
-    "cc=2 (cluster cosseno)": "#1f77b4",
     "cc=3 (cosseno+score)": "#ff7f0e",
+    "cc=6 (NLP DistilBERT)": "#1f77b4",
     "cc=7 (MLP+features)": "#d62728",
 }
 
