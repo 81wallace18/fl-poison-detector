@@ -43,13 +43,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--num-clients", type=int, default=NUM_CLIENTS)
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--dirichlet-alpha", type=float, default=DIRICHLET_ALPHA)
     args, _unknown = parser.parse_known_args()
     if args.num_clients <= 0:
         raise SystemExit("--num-clients deve ser positivo.")
+    if args.dirichlet_alpha <= 0:
+        raise SystemExit("--dirichlet-alpha deve ser positivo.")
     return args
 
 
-def dirichlet_partition(y: np.ndarray, rng: np.random.Generator, num_clients: int) -> list[np.ndarray]:
+def dirichlet_partition(
+    y: np.ndarray,
+    rng: np.random.Generator,
+    num_clients: int,
+    alpha: float,
+) -> list[np.ndarray]:
     class_indices = [np.where(y == c)[0] for c in range(NUM_CLASSES)]
     for indices in class_indices:
         rng.shuffle(indices)
@@ -57,7 +65,7 @@ def dirichlet_partition(y: np.ndarray, rng: np.random.Generator, num_clients: in
     while True:
         client_indices = [[] for _ in range(num_clients)]
         for indices in class_indices:
-            proportions = rng.dirichlet(np.repeat(DIRICHLET_ALPHA, num_clients))
+            proportions = rng.dirichlet(np.repeat(alpha, num_clients))
             split_points = (np.cumsum(proportions)[:-1] * len(indices)).astype(int)
             for client_id, split in enumerate(np.split(indices, split_points)):
                 client_indices[client_id].extend(split.tolist())
@@ -105,7 +113,7 @@ def main() -> None:
     (out_dir / "test").mkdir(parents=True)
 
     x_all, y_all = load_mnist(raw_dir)
-    partitions = dirichlet_partition(y_all, rng, args.num_clients)
+    partitions = dirichlet_partition(y_all, rng, args.num_clients, args.dirichlet_alpha)
 
     train_counts = []
     public_val_counts = []
