@@ -177,7 +177,8 @@ PY
   "$JUPYTER" nbconvert \
     --to notebook \
     --execute notebook_monza_analysis.ipynb \
-    --output notebook_monza_analysis.executed.ipynb
+    --output notebook_monza_analysis.executed.ipynb \
+    || log "WARN: nbconvert falhou; seguindo para os summaries CLI"
 
   log "Write CLI summaries"
   "$VENV_PY" scripts/plot_cc_attack_types.py \
