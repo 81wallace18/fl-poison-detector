@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from _fpr_frr_io import load_fpr_frr as _load_fpr_frr_csv
+
 SELECTED_CCS = [2, 3, 7]
 ATTACK_TYPES = ["malicious_label", "malicious_random", "malicious_shuffle", "malicious_zeros"]
 DEFENSE_LABELS = {
@@ -96,26 +98,18 @@ def latest_run(df: pd.DataFrame, min_rounds: int) -> pd.DataFrame:
 
 
 def load_fpr_frr(system_dir: Path, min_rounds: int, selected_ccs: list[int]) -> dict[str, pd.DataFrame]:
+    # Columns are normalized to DetectionFPR/DetectionFRR (per-round, paper Eq 14/15)
+    # and QuarantineFPR/QuarantineFRR (quarantine-occupancy diagnostic). Legacy CSVs
+    # with UploadFPR/FPR are mapped automatically by _fpr_frr_io.load_fpr_frr.
     frames: dict[str, pd.DataFrame] = {}
     for cc in selected_ccs:
         path = system_dir / f"fpr_frr_results_{cc}.csv"
         if not path.exists():
             continue
-        df = pd.read_csv(path)
-        df.columns = [c.strip() for c in df.columns]
-        df = df.rename(columns={"False Positive Rate": "FPR", "False Rejection Rate": "FRR"})
-        missing = {"Round", "FPR", "FRR"} - set(df.columns)
-        if missing:
-            raise ValueError(f"{path.name} sem colunas obrigatorias: {sorted(missing)}")
-        keep = ["Round", "FPR", "FRR"]
-        if "RunID" in df.columns:
-            keep = ["RunID"] + keep
-        df = df[keep].copy()
-        df = df[df["Round"].astype(str) != "Round"].reset_index(drop=True)
-        df["Round"] = df["Round"].astype(int)
-        df["FPR"] = df["FPR"].astype(float)
-        df["FRR"] = df["FRR"].astype(float)
-        frames[DEFENSE_LABELS.get(cc, f"cc={cc}")] = latest_run(df, min_rounds=min_rounds)
+        df = _load_fpr_frr_csv(path, min_rounds=min_rounds)
+        if "DetectionFPR" not in df.columns:
+            raise ValueError(f"{path.name} sem coluna de deteccao (Detection/Upload FPR)")
+        frames[DEFENSE_LABELS.get(cc, f"cc={cc}")] = df
     return frames
 
 
@@ -215,17 +209,24 @@ def plot_fpr_frr_by_round(dfs: dict[str, pd.DataFrame], out_dir: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharex=True)
     for name, df in dfs.items():
         color = COLORS.get(name, "#333333")
-        axes[0].plot(df["Round"], df["FPR"], label=name, color=color, linewidth=2)
-        axes[1].plot(df["Round"], df["FRR"], label=name, color=color, linewidth=2)
-    axes[0].set_title("False Positive Rate por round")
+        # Headline: per-round detection rate (paper Eq 14/15).
+        axes[0].plot(df["Round"], df["DetectionFPR"], label=name, color=color, linewidth=2)
+        axes[1].plot(df["Round"], df["DetectionFRR"], label=name, color=color, linewidth=2)
+        # Diagnostic: quarantine-occupancy snapshot (dashed, thinner).
+        if "QuarantineFPR" in df.columns:
+            axes[0].plot(df["Round"], df["QuarantineFPR"], color=color, linewidth=1,
+                         linestyle="--", alpha=0.5)
+            axes[1].plot(df["Round"], df["QuarantineFRR"], color=color, linewidth=1,
+                         linestyle="--", alpha=0.5)
+    axes[0].set_title("Detection FPR por round (tracejado = ocupacao de quarentena)")
     axes[0].set_xlabel("Round")
-    axes[0].set_ylabel("FPR")
+    axes[0].set_ylabel("DetectionFPR")
     axes[0].grid(True, alpha=0.3)
     axes[0].legend(loc="upper left", fontsize=8)
     axes[0].set_ylim(-0.01, max(0.30, axes[0].get_ylim()[1]))
-    axes[1].set_title("False Rejection Rate por round")
+    axes[1].set_title("Detection FRR por round (tracejado = ocupacao de quarentena)")
     axes[1].set_xlabel("Round")
-    axes[1].set_ylabel("FRR")
+    axes[1].set_ylabel("DetectionFRR")
     axes[1].grid(True, alpha=0.3)
     axes[1].legend(loc="upper left", fontsize=8)
     axes[1].set_ylim(-0.01, max(0.60, axes[1].get_ylim()[1]))

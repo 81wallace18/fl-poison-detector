@@ -9,6 +9,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from _fpr_frr_io import normalize_columns
+
 try:
     import h5py
 except ImportError:  # pragma: no cover - optional at import time
@@ -67,7 +69,7 @@ def summarize_candidate(candidate_dir: Path, tail_rounds: int) -> dict | None:
     if not fpr_path.exists() or not type_path.exists():
         return None
 
-    fpr_df = latest_run(pd.read_csv(fpr_path), min_rounds=tail_rounds)
+    fpr_df = latest_run(normalize_columns(pd.read_csv(fpr_path)), min_rounds=tail_rounds)
     type_df = latest_run(pd.read_csv(type_path), min_rounds=tail_rounds)
 
     fpr_tail_rounds = sorted(fpr_df["Round"].astype(int).unique())[-tail_rounds:]
@@ -81,10 +83,10 @@ def summarize_candidate(candidate_dir: Path, tail_rounds: int) -> dict | None:
         "CC": cc,
         "Threshold": float(meta["threshold"]),
         "Rounds": int(fpr_df["Round"].astype(int).nunique()),
-        "FPR_mean_tail": float(fpr_tail["FPR"].mean()),
-        "FRR_mean_tail": float(fpr_tail["FRR"].mean()),
-        "UploadFPR_mean_tail": float(fpr_tail["UploadFPR"].mean()),
-        "UploadFRR_mean_tail": float(fpr_tail["UploadFRR"].mean()),
+        "DetectionFPR_mean_tail": float(fpr_tail["DetectionFPR"].mean()),
+        "DetectionFRR_mean_tail": float(fpr_tail["DetectionFRR"].mean()),
+        "QuarantineFPR_mean_tail": float(fpr_tail["QuarantineFPR"].mean()),
+        "QuarantineFRR_mean_tail": float(fpr_tail["QuarantineFRR"].mean()),
     }
 
     for attack_type, group in type_tail.groupby("AttackType", sort=True):
@@ -121,16 +123,16 @@ def plot_tradeoff(summary: pd.DataFrame, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 5))
     for detector, group in summary.groupby("Detector", sort=True):
         ax.scatter(
-            group["UploadFPR_mean_tail"],
+            group["DetectionFPR_mean_tail"],
             group["Recall_malicious_label"],
             s=70,
             label=detector,
         )
         for _, row in group.iterrows():
-            ax.annotate(f"{row['Threshold']:.2f}", (row["UploadFPR_mean_tail"], row["Recall_malicious_label"]))
-    ax.axvline(0.05, color="gray", linestyle=":", linewidth=1.2, label="UploadFPR 5%")
-    ax.set_title("Trade-off malicious_label recall vs UploadFPR")
-    ax.set_xlabel("UploadFPR medio nas ultimas rodadas")
+            ax.annotate(f"{row['Threshold']:.2f}", (row["DetectionFPR_mean_tail"], row["Recall_malicious_label"]))
+    ax.axvline(0.05, color="gray", linestyle=":", linewidth=1.2, label="DetectionFPR 5%")
+    ax.set_title("Trade-off malicious_label recall vs DetectionFPR")
+    ax.set_xlabel("DetectionFPR medio nas ultimas rodadas")
     ax.set_ylabel("Recall malicious_label")
     ax.set_xlim(left=0)
     ax.set_ylim(0, 1.05)
@@ -158,11 +160,11 @@ def main() -> None:
     summary_path = args.sweep_dir / "threshold_sweep_summary.csv"
     summary.to_csv(summary_path, index=False)
 
-    required = {"Recall_malicious_label", "UploadFPR_mean_tail", "FinalAccuracy"}
+    required = {"Recall_malicious_label", "DetectionFPR_mean_tail", "FinalAccuracy"}
     missing = required - set(summary.columns)
     if not missing:
         plot_metric(summary, "Recall_malicious_label", "Recall malicious_label", args.sweep_dir / "plot_threshold_label_recall.png")
-        plot_metric(summary, "UploadFPR_mean_tail", "UploadFPR medio", args.sweep_dir / "plot_threshold_upload_fpr.png")
+        plot_metric(summary, "DetectionFPR_mean_tail", "DetectionFPR medio", args.sweep_dir / "plot_threshold_upload_fpr.png")
         plot_metric(summary, "FinalAccuracy", "Acuracia final", args.sweep_dir / "plot_threshold_accuracy.png")
         plot_tradeoff(summary, args.sweep_dir / "plot_threshold_tradeoff.png")
 

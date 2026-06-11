@@ -27,7 +27,10 @@ class FedAvg(Server):
             self.csv_filename = 'fpr_frr_results_7.csv'
         else:
             self.csv_filename = 'f.csv'
-        self._ensure_csv_header(self.csv_filename, ['RunID', 'Round', 'FPR', 'FRR', 'UploadFPR', 'UploadFRR'])
+        self._ensure_csv_header(
+            self.csv_filename,
+            ['RunID', 'Round', 'DetectionFPR', 'DetectionFRR', 'QuarantineFPR', 'QuarantineFRR'],
+        )
         self.cc_detail_filename = f'cc_detail_results_{self.cc}.csv'
         self.cc_type_filename = f'cc_type_results_{self.cc}.csv'
         if self.cc in (2, 3, 6, 7):
@@ -92,13 +95,19 @@ class FedAvg(Server):
                 writer = csv.writer(file)
                 writer.writerow(header)
 
-    def save_fpr_frr_to_csv(self, round_number, FPR, FRR, upload_fpr='', upload_frr=''):
+    def save_fpr_frr_to_csv(self, round_number, detection_fpr, detection_frr,
+                            quarantine_fpr='', quarantine_frr=''):
         """
-        Saves the FPR and FRR results to a CSV file for each round.
+        Saves per-round detection FPR/FRR (paper Eq 14/15, headline) and the
+        quarantine-occupancy snapshot (diagnostic) to a CSV file for each round.
         """
         with open(self.csv_filename, mode='a', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow([self.run_id, round_number, FPR, FRR, upload_fpr, upload_frr])
+            writer.writerow([
+                self.run_id, round_number,
+                detection_fpr, detection_frr,
+                quarantine_fpr, quarantine_frr,
+            ])
 
     def save_cc_detail_to_csv(self, rows):
         if not rows:
@@ -175,6 +184,12 @@ class FedAvg(Server):
         return rows
 
     def compute_upload_fpr_frr(self, rows):
+        """Per-round detection FPR/FRR (paper Eq 14/15) -- the headline metric.
+
+        Computed only over the clients that uploaded this round: a removal of a client
+        that attacked this round is a TP, removal of a benign upload is a FP, etc.
+        This is what Table 4 of the MONZA paper reports (DetectionFPR/DetectionFRR).
+        """
         if not rows:
             return '', ''
         FP = TP = FN = TN = 0
@@ -195,7 +210,7 @@ class FedAvg(Server):
 
     def set_client_quarantine(self, client_id):
         self.client_quarantine_dict[client_id]['quarentena'] = self.client_quarantine_dict[client_id]['quarentena'] +1
-        self.client_quarantine_dict[client_id]['roundsQuarent'] = self.client_quarantine_dict[client_id]['quarentena'] *2
+        self.client_quarantine_dict[client_id]['roundsQuarent'] = 2 ** self.client_quarantine_dict[client_id]['quarentena']
 
     def decrease_quarentine(self, client_id):
         if self.client_quarantine_dict[client_id]['roundsQuarent'] ==0:
@@ -204,8 +219,14 @@ class FedAvg(Server):
             self.client_quarantine_dict[client_id]['roundsQuarent'] = self.client_quarantine_dict[client_id]['roundsQuarent'] -1
     def compute_fpr_frr(self):
         """
-        Calcula False Positive Rate (FPR) e False Rejection Rate (FRR)
-        usando self.client_quarantine_dict e self.index_malicious.
+        Quarantine-occupancy snapshot (DIAGNOSTIC, NOT the paper detection FPR/FRR).
+
+        Counts how many of the 100 clients are currently held in quarantine vs the
+        designated-malicious set. Because quarantine duration grows exponentially
+        (2**n rounds, see set_client_quarantine), recurrent benign clients stay
+        quarantined indefinitely, so this metric snowballs and saturates over the run.
+        Saved as QuarantineFPR/QuarantineFRR. For the paper metric use
+        compute_upload_fpr_frr (DetectionFPR/DetectionFRR).
         """
         FP = 0  # Falsos positivos: clientes em quarentena mas não maliciosos
         TP = 0  # Verdadeiros positivos: clientes em quarentena e maliciosos
@@ -356,22 +377,19 @@ class FedAvg(Server):
                         client_tuples = [(self.ids[idx], client_scores[self.ids[idx]]) for idx in range(len(self.ids))]
                         total = len(self.index_malicious)
                         found = 0
-                        if std_score < 0.001:
-                            print("nenhum malicioso")
-                        else:
-                            for idx in range(len(client_tuples) - 1, -1, -1):
-                                client_id, score = client_tuples[idx]
-                                print(f"Esse  {client_id} with score {score:.4f} ")
-                                if score < mean_score:
-                                    if client_id in self.index_malicious:
-                                        found += 1
-                                    print(f"Removing client {client_id} with score {score:.4f} (below average)")
-                                    round_removed_clients.append(client_id)
-                                    self.set_client_quarantine(client_id)
-                                    del self.uploaded_models[idx]
-                                    del self.ids[idx]
-                                    del self.uploaded_ids[idx]
-                                    del self.uploaded_weights[idx]
+                        for idx in range(len(client_tuples) - 1, -1, -1):
+                            client_id, score = client_tuples[idx]
+                            print(f"Esse  {client_id} with score {score:.4f} ")
+                            if score < mean_score:
+                                if client_id in self.index_malicious:
+                                    found += 1
+                                print(f"Removing client {client_id} with score {score:.4f} (below average)")
+                                round_removed_clients.append(client_id)
+                                self.set_client_quarantine(client_id)
+                                del self.uploaded_models[idx]
+                                del self.ids[idx]
+                                del self.uploaded_ids[idx]
+                                del self.uploaded_weights[idx]
                         found_pct = (found/total) * 100 if total > 0 else 0.0
                         print("porcentagem de clientes maliciosos de verdade achados: "+ str(found_pct) + "%")
                         if self.uploaded_weights:
@@ -481,21 +499,23 @@ class FedAvg(Server):
                             self.uploaded_weights = [w / s for w in self.uploaded_weights]
                     print(f'Tempo de execução cc={self.cc}: {time.time()-oi:.4f}s')
             print(self.client_quarantine_dict)
-            FPR=0
-            FRR = 0
+            # Quarantine-occupancy snapshot (diagnostic, NOT the paper FPR/FRR).
+            quarantine_fpr = 0
+            quarantine_frr = 0
             if self.cc ==2:
-                FPR, FRR = self.compute_fpr_frr_cluster(self.removed_clients, self.cluster_tuples)
+                quarantine_fpr, quarantine_frr = self.compute_fpr_frr_cluster(self.removed_clients, self.cluster_tuples)
             if self.cc ==3:
-                FPR, FRR = self.compute_fpr_frr()
+                quarantine_fpr, quarantine_frr = self.compute_fpr_frr()
             if self.cc ==6:
-                FPR, FRR = self.compute_fpr_frr()
+                quarantine_fpr, quarantine_frr = self.compute_fpr_frr()
             if self.cc ==7:
-                FPR, FRR = self.compute_fpr_frr()
-            print(f"Round {i}: False Positive Rate = {FPR:.4f}, False Rejection Rate = {FRR:.4f}")
-            upload_fpr, upload_frr = self.compute_upload_fpr_frr(round_detail_rows)
-            if upload_fpr != '':
-                print(f"Round {i}: Upload FPR = {upload_fpr:.4f}, Upload FRR = {upload_frr:.4f}")
-            self.save_fpr_frr_to_csv(i, FPR, FRR, upload_fpr, upload_frr)
+                quarantine_fpr, quarantine_frr = self.compute_fpr_frr()
+            # Per-round detection rate (paper Eq 14/15, headline metric).
+            detection_fpr, detection_frr = self.compute_upload_fpr_frr(round_detail_rows)
+            if detection_fpr != '':
+                print(f"Round {i}: DetectionFPR = {detection_fpr:.4f}, DetectionFRR = {detection_frr:.4f}")
+            print(f"Round {i}: QuarantineFPR = {quarantine_fpr:.4f}, QuarantineFRR = {quarantine_frr:.4f}")
+            self.save_fpr_frr_to_csv(i, detection_fpr, detection_frr, quarantine_fpr, quarantine_frr)
             for client_id in quarantined_at_round_start:
                 self.decrease_quarentine(client_id)
             if self.dlg_eval and i%self.dlg_gap == 0:
