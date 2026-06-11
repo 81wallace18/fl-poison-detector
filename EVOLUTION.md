@@ -145,14 +145,19 @@ Bate com a banda esperada do bench Fase 5 (DistilBERT plateia em ~0.88, MLP ~0.9
 
 **Em produção (defesa rolando, média últimos 30 dos 50 rounds)**:
 
-| cc | Defesa | FPR | FRR | Score (FPR+FRR) |
+| cc | Defesa | QuarantineFPR | QuarantineFRR | Score (Q-FPR+Q-FRR) |
 |---|---|---:|---:|---:|
 | 2 | Cluster cosseno (PFLlib baseline) | 0.000 | 0.262 | 0.262 |
 | 3 | Cosseno + score (PFLlib baseline) | 0.053 | 0.114 | 0.168 |
 | 6 | NLP DistilBERT | 0.112 | 0.114 | 0.226 |
 | **7** | **MLP + features** | **0.000** | **0.156** | **0.156** 🏆 |
 
-**MLP+features Pareto-supera os 2 baselines do PFLlib em produção FL real**: zero falsos positivos (não pune benignos) e melhor FRR que cluster.
+> ⚠️ Estas colunas são **`QuarantineFPR/FRR`** (ocupação de quarentena, diagnóstico) — fazem *snowball*
+> pela quarentena exponencial `2ⁿ` e **não** são a FPR/FRR de detecção do paper. A métrica headline
+> (paper Eq 14/15) é a **detecção por-round `DetectionFPR/FRR`**; só runs com logging atual a têm
+> (cc=3 MNIST 0.012/0.026, CIFAR10 0.066/0.060). cc2/6/7 DetectionFPR/FRR **pendente de re-run**.
+
+**MLP+features Pareto-supera os 2 baselines do PFLlib em produção FL real**: zero falsos positivos (não pune benignos) e melhor FRR que cluster. *(Pareto medido em QuarantineFPR/FRR; revalidar em DetectionFPR/FRR após re-run.)*
 
 ### Insights novos (não redundantes com Fases 1–6)
 

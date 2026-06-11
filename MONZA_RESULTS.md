@@ -56,9 +56,17 @@ Rodada com `-cc 5` (sem defesa) por 50 rounds:
 
 ## Defesas em produção (passo 3)
 
-50 rounds de FL com `-rfake 1` (cliente malicioso ataca todo round). Métricas FPR/FRR computadas pelo MONZA via quarentena.
+50 rounds de FL com `-rfake 1` (cliente malicioso ataca todo round).
 
-| cc | Defesa | FPR (média 30 últimos rounds) | FRR (média 30 últimos rounds) |
+> ⚠️ **As colunas abaixo são `QuarantineFPR/FRR`** — ocupação de quarentena (diagnóstico), **não** a
+> FPR/FRR de detecção do paper. Como a quarentena cresce exponencialmente (`2ⁿ`, `set_client_quarantine`),
+> benignos non-IID reincidentes ficam presos e contam como FP em todo round → a métrica faz *snowball*
+> e satura. Para comparar com a Table 4 do paper use a **detecção por-round `DetectionFPR/FRR`**
+> (paper Eq 14/15), que só os runs com logging atual têm. Hoje só **cc=3** tem per-round:
+> MNIST `DetectionFPR=0.012 / DetectionFRR=0.026` (paper 0.007/0.075), CIFAR10 `0.066 / 0.060`
+> (paper 0.036/0.077). **DetectionFPR/FRR de cc2/6/7 está pendente de re-run.**
+
+| cc | Defesa | QuarantineFPR (média 30 últimos) | QuarantineFRR (média 30 últimos) |
 |---|---|---:|---:|
 | 2 | Cluster cosseno (PFLlib) | **0.0000** | 0.2622 |
 | 3 | Cosseno + score (PFLlib) | 0.0533 | 0.1144 |
@@ -108,7 +116,8 @@ Em geral, métodos baseados em cosseno entre updates dependem de assumir que mal
 
 ## Ranking pelo critério honesto
 
-Score combinado (FPR + FRR, menor = melhor):
+Score combinado (QuarantineFPR + QuarantineFRR, menor = melhor) — **ranking diagnóstico**, não a
+métrica do paper (ver nota acima sobre DetectionFPR/FRR per-round):
 
 1. **cc=7 (MLP)**: 0.000 + 0.156 = **0.156** 🏆
 2. cc=3 (cosseno+score): 0.053 + 0.114 = 0.168

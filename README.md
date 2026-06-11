@@ -19,10 +19,16 @@ MLP+features ganha por 0.10–0.15 F1 em todos os cenários.
 
 Validação posterior em FL real (PFLlibMonza, 100 clientes Dirichlet non-IID, 30 maliciosos):
 
-| cc | Defesa | FPR | FRR |
+| cc | Defesa | QuarantineFPR | QuarantineFRR |
 |---|---|---:|---:|
 | 6 | NLP DistilBERT | 0.112 | 0.114 |
 | **7** | **MLP+features** | **0.000** | **0.156** |
+
+> ⚠️ **Estes são `QuarantineFPR/FRR`** (ocupação de quarentena, diagnóstico) — não a FPR/FRR de
+> detecção do paper. A quarentena é exponencial (`2ⁿ`), então essa métrica faz *snowball* e satura;
+> não é comparável à Table 4 do paper. A métrica headline (paper Eq 14/15) é a **detecção por-round
+> `DetectionFPR/FRR`**, que só os runs novos logam (ex.: cc=3 MNIST 0.012/0.026, CIFAR10 0.066/0.060).
+> DetectionFPR/FRR de cc2/6/7 está **pendente de re-run** com o logging atual.
 
 MLP+features ficou como melhor detector final no fluxo normalizado. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
 
