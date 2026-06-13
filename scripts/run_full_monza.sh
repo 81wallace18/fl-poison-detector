@@ -186,6 +186,11 @@ PY
     --out-dir "$ANALYSIS_OUT" \
     --dataset "$DATASET_NAME" \
     --tail-rounds 30
+  # Archive detection CSVs into the per-dataset ANALYSIS_OUT so a later run (other dataset)
+  # cleaning PFLlibMonza/system/ does not clobber them.
+  cp "$SYSTEM_DIR"/fpr_frr_results_*.csv "$ANALYSIS_OUT"/ 2>/dev/null || true
+  cp "$SYSTEM_DIR"/cc_detail_results_*.csv "$ANALYSIS_OUT"/ 2>/dev/null || true
+  cp "$SYSTEM_DIR"/cc_type_results_*.csv "$ANALYSIS_OUT"/ 2>/dev/null || true
   log "DONE"
 }
 

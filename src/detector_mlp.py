@@ -2,7 +2,7 @@
 
 Pipeline:
   state_dicts/*.safetensors  ->  features.extract_features (60 dims)
-  -> StandardScaler          ->  MLPDetector (60->128->64->2)
+  -> QuantileTransformer     ->  MLPDetector (60->128->64->2)
   -> early stopping em F1    ->  artefatos em detector_mlp_artifacts/
 
 Saida inclui breakdown de recall por tipo de ataque (benign + 4 maliciosos).
@@ -29,7 +29,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import QuantileTransformer
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
@@ -478,7 +478,14 @@ def main() -> None:
     print(f'  Split calib: {split_summary(entries, calib_idx)}')
     print(f'  Split test : {split_summary(entries, test_idx)}')
 
-    scaler = StandardScaler()
+    # QuantileTransformer (vs StandardScaler) is robust to the weight-magnitude drift over long FL
+    # runs: it maps features to a fixed normal distribution by rank, so out-of-range magnitudes in
+    # late rounds saturate instead of producing extreme out-of-domain inputs to the MLP.
+    scaler = QuantileTransformer(
+        output_distribution='normal',
+        n_quantiles=min(1000, len(train_idx)),
+        random_state=42,
+    )
     scaler.fit(X[train_idx])
     X_train_s = scaler.transform(X_train).astype(np.float32)
     X_dev_s = scaler.transform(X_dev).astype(np.float32)
