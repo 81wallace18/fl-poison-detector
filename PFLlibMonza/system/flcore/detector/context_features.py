@@ -41,6 +41,15 @@ def _cos(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(torch.dot(a, b).div(den).item())
 
 
+def _kl(p: np.ndarray, q: np.ndarray) -> float:
+    """KL(p || q) for two probability vectors (label-flip distorts p vs the global q)."""
+    p = np.asarray(p, dtype=np.float64) + 1e-12
+    q = np.asarray(q, dtype=np.float64) + 1e-12
+    p = p / p.sum()
+    q = q / q.sum()
+    return float(np.sum(p * np.log(p / q)))
+
+
 def _delta_stats(local: torch.Tensor, global_: torch.Tensor) -> List[float]:
     delta = (local.float() - global_.float()).flatten()
     global_flat = global_.float().flatten()
@@ -203,6 +212,7 @@ def _eval_state_dict(
     reverse_margins: List[torch.Tensor] = []
     reverse_prob_deltas: List[torch.Tensor] = []
     reverse_preds: List[torch.Tensor] = []
+    all_probs: List[torch.Tensor] = []
     for xb, yb in DataLoader(TensorDataset(X, y), batch_size=128, shuffle=False):
         xb = xb.to(device)
         yb = yb.to(device)
@@ -214,6 +224,7 @@ def _eval_state_dict(
         true_logits = logits.gather(1, yb[:, None]).squeeze(1)
         flip_logits = logits.gather(1, y_flip[:, None]).squeeze(1)
         probs = torch.softmax(logits, dim=1)
+        all_probs.append(probs.detach().cpu())
         true_probs = probs.gather(1, yb[:, None]).squeeze(1)
         flip_probs = probs.gather(1, y_flip[:, None]).squeeze(1)
         masked = logits.clone()
@@ -228,17 +239,25 @@ def _eval_state_dict(
     reverse_margin = torch.cat(reverse_margins)
     reverse_prob_delta = torch.cat(reverse_prob_deltas)
     reverse_pred = torch.cat(reverse_preds).float()
+    probs_all = torch.cat(all_probs)  # [N, NUM_CLASSES] mean softmax per sample
     y_cpu = y.cpu()
     acc_by_class = np.zeros(NUM_CLASSES, dtype=np.float32)
     margin_by_class = np.zeros(NUM_CLASSES, dtype=np.float32)
     reverse_margin_by_pair = np.zeros(len(FLIP_PAIRS), dtype=np.float32)
     reverse_prob_delta_by_pair = np.zeros(len(FLIP_PAIRS), dtype=np.float32)
     reverse_pred_by_pair = np.zeros(len(FLIP_PAIRS), dtype=np.float32)
+    # Mean softmax distribution for inputs of each true class (for KL source->target signal),
+    # and mean probability mass placed on the flip target (NUM_CLASSES-1-c) for those inputs.
+    mean_probs_by_class = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=np.float32)
+    flip_target_mass_by_class = np.zeros(NUM_CLASSES, dtype=np.float32)
     for c in range(NUM_CLASSES):
         mask = y_cpu == c
         if mask.any():
             acc_by_class[c] = float(ok[mask].mean().item())
             margin_by_class[c] = float(margin[mask].mean().item())
+            mp = probs_all[mask].mean(dim=0).numpy().astype(np.float32)
+            mean_probs_by_class[c] = mp
+            flip_target_mass_by_class[c] = float(mp[NUM_CLASSES - 1 - c])
     for idx, (source, target) in enumerate(FLIP_PAIRS):
         mask = (y_cpu == source) | (y_cpu == target)
         if mask.any():
@@ -253,6 +272,8 @@ def _eval_state_dict(
         'reverse_margin_by_pair': reverse_margin_by_pair,
         'reverse_prob_delta_by_pair': reverse_prob_delta_by_pair,
         'reverse_pred_by_pair': reverse_pred_by_pair,
+        'mean_probs_by_class': mean_probs_by_class,
+        'flip_target_mass_by_class': flip_target_mass_by_class,
     }
 
 
@@ -284,6 +305,11 @@ def feature_names() -> List[str]:
             f'val_reverse_prob_delta_pair_{pair}',
             f'val_reverse_pred_delta_pair_{pair}',
         ])
+    # KL source->target channel (FL-Defender-style): per-class KL(local||global) of the mean
+    # softmax distribution, and per-class mass shifted to the flip target (NUM_CLASSES-1-c).
+    names.extend([f'val_kl_local_global_class_{i}' for i in range(NUM_CLASSES)])
+    names.extend([f'val_flip_target_mass_delta_class_{i}' for i in range(NUM_CLASSES)])
+    names.extend(['val_kl_local_global_max', 'val_flip_target_mass_delta_max'])
     return names
 
 
@@ -345,8 +371,20 @@ def extract_context_features(
                 float(reverse_prob_delta[idx]),
                 float(reverse_pred_delta[idx]),
             ])
+        # KL source->target channel: per-class KL(local||global) + flip-target mass delta.
+        local_mp = local_eval['mean_probs_by_class']
+        global_mp = global_eval['mean_probs_by_class']
+        kl_class = np.asarray(
+            [_kl(local_mp[c], global_mp[c]) for c in range(NUM_CLASSES)], dtype=np.float32
+        )
+        flip_mass_delta = (
+            local_eval['flip_target_mass_by_class'] - global_eval['flip_target_mass_by_class']
+        ).astype(np.float32)
+        vals.extend(kl_class.tolist())
+        vals.extend(flip_mass_delta.tolist())
+        vals.extend([float(kl_class.max()), float(flip_mass_delta.max())])
     else:
-        vals.extend([0.0] * (26 + len(FLIP_PAIRS) * 3))
+        vals.extend([0.0] * (26 + len(FLIP_PAIRS) * 3 + NUM_CLASSES * 2 + 2))
     arr = np.nan_to_num(np.asarray(vals, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
     if arr.shape[0] != N_CONTEXT_FEATURES:
         raise ValueError(f'Context feature size {arr.shape[0]} != {N_CONTEXT_FEATURES}')
