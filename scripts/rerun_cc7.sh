@@ -37,6 +37,9 @@ fi
 PUBLIC_VAL_DIR="${PUBLIC_VAL_DIR:-$DATASET_DIR/$DATASET_NAME/public_val}"
 MLP_THRESHOLD_KEY="${MLP_THRESHOLD_KEY:-combined_label_fpr05}"
 MLP_THRESHOLD_VALUE="${MLP_THRESHOLD_VALUE:-}"
+# Activate the (otherwise inert) label-flip aux head: oversample the minority class and weight its loss.
+OVERSAMPLE_LABEL_FACTOR="${OVERSAMPLE_LABEL_FACTOR:-4}"
+LABEL_LOSS_WEIGHT="${LABEL_LOSS_WEIGHT:-4}"
 RUN_LOG="${RUN_LOG:-$ROOT/rerun_cc7_${DATASET_NAME}_$(date +%Y%m%d_%H%M%S).log}"
 
 export PUBLIC_VAL_DIR DATASET_NAME
@@ -81,9 +84,10 @@ main() {
     --dump_state_dicts "$STATE_DICTS_DIR" --dump_start_round "$DUMP_START_ROUND"
   du -sh "$STATE_DICTS_DIR" || true
 
-  log "Train MLP detector (QuantileTransformer)"
+  log "Train MLP detector (QuantileTransformer + label-flip head)"
   STATE_DICTS_DIR="$STATE_DICTS_DIR" PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
   DATASET_NAME="$DATASET_NAME" ARTIFACTS_DIR="$MLP_DIR" \
+  OVERSAMPLE_LABEL_FACTOR="$OVERSAMPLE_LABEL_FACTOR" LABEL_LOSS_WEIGHT="$LABEL_LOSS_WEIGHT" \
     "$VENV_PY" -u src/detector_mlp.py
 
   [[ "$KEEP_DUMP" == "1" ]] || { log "Free dump"; rm -rf "$STATE_DICTS_DIR"; }
@@ -116,7 +120,9 @@ if [[ "${1:-}" == "--background" ]]; then
     DUMP_TIMES="$DUMP_TIMES" DUMP_START_ROUND="$DUMP_START_ROUND" KEEP_DUMP="$KEEP_DUMP" \
     STATE_DICTS_DIR="$STATE_DICTS_DIR" MLP_DIR="$MLP_DIR" ANALYSIS_OUT="$ANALYSIS_OUT" \
     PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" MLP_THRESHOLD_KEY="$MLP_THRESHOLD_KEY" \
-    MLP_THRESHOLD_VALUE="$MLP_THRESHOLD_VALUE" RUN_LOG="$RUN_LOG" \
+    MLP_THRESHOLD_VALUE="$MLP_THRESHOLD_VALUE" \
+    OVERSAMPLE_LABEL_FACTOR="$OVERSAMPLE_LABEL_FACTOR" LABEL_LOSS_WEIGHT="$LABEL_LOSS_WEIGHT" \
+    RUN_LOG="$RUN_LOG" \
     "$0" >"$RUN_LOG" 2>&1 &
   printf 'Started PID %s\nLog: %s\n' "$!" "$RUN_LOG"
 else
