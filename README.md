@@ -39,6 +39,10 @@ Documentação:
 - [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu
 - [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das defesas MONZA (`cc=2`/`cc=3`/`cc=6`/`cc=7`)
 
+> ⚠️ **Limitações conhecidas (leia antes de comparar):**
+> - [`CC3_CIFAR_INSTABILITY.md`](CC3_CIFAR_INSTABILITY.md) — cc3 (MONZA original) colapsa em ~40% dos seeds no CIFAR (quarentena 2ⁿ → pool starvation); média 33±19.5 vs paper 47.6.
+> - [`CC6_BERT_LIMITATION.md`](CC6_BERT_LIMITATION.md) — cc6 (BERT) é cego a `shuffle` por design → colapsa; resultado negativo.
+
 Run completo MONZA do zero:
 
 ```bash
