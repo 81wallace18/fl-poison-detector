@@ -6,6 +6,7 @@ VENV_PY="${VENV_PY:-$ROOT/.venv/bin/python}"
 JUPYTER="${JUPYTER:-$ROOT/.venv/bin/jupyter}"
 SYSTEM_DIR="$ROOT/PFLlibMonza/system"
 DATASET_DIR="$ROOT/PFLlibMonza/dataset"
+RESULTS_DIR="$ROOT/PFLlibMonza/results"
 DATASET_NAME="${DATASET_NAME:-MNIST}"
 MODEL="${MODEL:-CNN}"
 GLOBAL_ROUNDS="${GLOBAL_ROUNDS:-50}"
@@ -23,6 +24,8 @@ DUMP_GLOBAL_ROUNDS="${DUMP_GLOBAL_ROUNDS:-60}"
 DUMP_TIMES="${DUMP_TIMES:-1}"
 DUMP_START_ROUND="${DUMP_START_ROUND:-$((ROUND_INIT_ATK + 1))}"
 KEEP_DUMP="${KEEP_DUMP:-0}"
+# SKIP_BERT=1 skips DistilBERT training + cc6 (run only cc5/cc3/cc7).
+SKIP_BERT="${SKIP_BERT:-0}"
 
 STATE_DICTS_DIR="${STATE_DICTS_DIR:-$ROOT/state_dicts_monza_cnn_mnist}"
 BERT_DIR="${BERT_DIR:-$ROOT/detector_monza_cnn_mnist}"
@@ -97,6 +100,8 @@ main() {
     "$SYSTEM_DIR"/fpr_frr_results_*.csv \
     "$SYSTEM_DIR"/cc_detail_results_*.csv \
     "$SYSTEM_DIR"/cc_type_results_*.csv
+  # Fresh slate: drop this dataset's result h5 so nothing mixes with old runs.
+  rm -f "$RESULTS_DIR"/"${DATASET_NAME}"_FedAvg_*.h5
 
   log "Validate environment"
   "$VENV_PY" - <<'PY'
@@ -127,20 +132,24 @@ PY
   find "$STATE_DICTS_DIR" -name '*.json' | wc -l
   du -sh "$STATE_DICTS_DIR"
 
-  log "Train DistilBERT detector"
-  STATE_DICTS_DIR="$STATE_DICTS_DIR" \
-  PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
-  OVERSAMPLE_LABEL_FACTOR="$BERT_OVERSAMPLE_LABEL_FACTOR" \
-  LABEL_LOSS_WEIGHT="$BERT_LABEL_LOSS_WEIGHT" \
-  BERT_EPOCHS="$BERT_EPOCHS" \
-  BERT_EARLY_STOPPING_PATIENCE="$BERT_EARLY_STOPPING_PATIENCE" \
-  BERT_MAX_BENIGN_FPR="$BERT_MAX_BENIGN_FPR" \
-  BERT_TRAIN_BATCH_SIZE="$BERT_TRAIN_BATCH_SIZE" \
-  BERT_EVAL_BATCH_SIZE="$BERT_EVAL_BATCH_SIZE" \
-  BERT_LEARNING_RATE="$BERT_LEARNING_RATE" \
-  FINAL_MODEL_DIR="$BERT_DIR" \
-  RUN_DIR="$RUN_DIR" \
-    "$VENV_PY" -u src/detector.py
+  if [[ "$SKIP_BERT" != "1" ]]; then
+    log "Train DistilBERT detector"
+    STATE_DICTS_DIR="$STATE_DICTS_DIR" \
+    PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
+    OVERSAMPLE_LABEL_FACTOR="$BERT_OVERSAMPLE_LABEL_FACTOR" \
+    LABEL_LOSS_WEIGHT="$BERT_LABEL_LOSS_WEIGHT" \
+    BERT_EPOCHS="$BERT_EPOCHS" \
+    BERT_EARLY_STOPPING_PATIENCE="$BERT_EARLY_STOPPING_PATIENCE" \
+    BERT_MAX_BENIGN_FPR="$BERT_MAX_BENIGN_FPR" \
+    BERT_TRAIN_BATCH_SIZE="$BERT_TRAIN_BATCH_SIZE" \
+    BERT_EVAL_BATCH_SIZE="$BERT_EVAL_BATCH_SIZE" \
+    BERT_LEARNING_RATE="$BERT_LEARNING_RATE" \
+    FINAL_MODEL_DIR="$BERT_DIR" \
+    RUN_DIR="$RUN_DIR" \
+      "$VENV_PY" -u src/detector.py
+  else
+    log "SKIP_BERT=1: pulando treino do DistilBERT (cc6)"
+  fi
 
   log "Train MLP detector"
   STATE_DICTS_DIR="$STATE_DICTS_DIR" \
@@ -153,6 +162,9 @@ PY
     log "Free dump state_dicts (detectors trained)"
     rm -rf "$STATE_DICTS_DIR"
   fi
+  # Drop the dump's own cc5 eval h5 (gr=DUMP) so it never lingers as a short-round result;
+  # the real cc5 without-defense eval below recreates it at full GLOBAL_ROUNDS.
+  rm -f "$RESULTS_DIR"/"${DATASET_NAME}"_FedAvg_5_100.0_"${NUM_MALICIOUS}"_test_*.h5
 
   log "Run baselines (paper scenario, gr=${GLOBAL_ROUNDS} times=${TIMES})"
   run_monza 5 0 "$GLOBAL_ROUNDS" "$TIMES"                 # clean (no malicious)
@@ -170,7 +182,9 @@ PY
   if [[ -n "$MLP_THRESHOLD_VALUE" ]]; then
     mlp_args+=(--mlp_threshold_value "$MLP_THRESHOLD_VALUE")
   fi
-  run_monza 6 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${bert_args[@]}"
+  if [[ "$SKIP_BERT" != "1" ]]; then
+    run_monza 6 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${bert_args[@]}"
+  fi
   run_monza 7 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${mlp_args[@]}"
 
   log "Execute notebook plots"
@@ -220,6 +234,7 @@ if [[ "${1:-}" == "--background" ]]; then
     DUMP_TIMES="$DUMP_TIMES" \
     DUMP_START_ROUND="$DUMP_START_ROUND" \
     KEEP_DUMP="$KEEP_DUMP" \
+    SKIP_BERT="$SKIP_BERT" \
     STATE_DICTS_DIR="$STATE_DICTS_DIR" \
     BERT_DIR="$BERT_DIR" \
     MLP_DIR="$MLP_DIR" \

@@ -12,18 +12,20 @@ import pandas as pd
 
 from _fpr_frr_io import load_fpr_frr as _load_fpr_frr_csv
 
-SELECTED_CCS = [3, 6, 7]
+SELECTED_CCS = [3, 7]
 ATTACK_TYPES = ["malicious_label", "malicious_random", "malicious_shuffle", "malicious_zeros"]
 DEFENSE_LABELS = {
     3: "cc=3 (cosseno+score)",
-    6: "cc=6 (NLP DistilBERT)",
+    5: "cc=5 (sem defesa)",
     7: "cc=7 (MLP+features)",
 }
 COLORS = {
     "cc=3 (cosseno+score)": "#ff7f0e",
-    "cc=6 (NLP DistilBERT)": "#1f77b4",
+    "cc=5 (sem defesa)": "#7f7f7f",
     "cc=7 (MLP+features)": "#d62728",
 }
+# Per-cc FPR x FRR plots: cc3/cc7 from fpr_frr_results_{cc}.csv, cc5 (no defense) from f.csv.
+INDIVIDUAL_FPR_FRR = {3: "fpr_frr_results_3.csv", 5: "f.csv", 7: "fpr_frr_results_7.csv"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -235,6 +237,56 @@ def plot_fpr_frr_by_round(dfs: dict[str, pd.DataFrame], out_dir: Path) -> None:
     plt.close(fig)
 
 
+def _draw_fpr_frr(frames: dict[str, pd.DataFrame], title: str, out_path: Path) -> None:
+    """2 panels (DetectionFPR / DetectionFRR by round) for each named frame; quarantine dashed."""
+    if not frames:
+        return
+    fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharex=True)
+    for name, df in frames.items():
+        color = COLORS.get(name, "#333333")
+        det_fpr = df.get("DetectionFPR")
+        det_frr = df.get("DetectionFRR")
+        if det_fpr is not None:
+            axes[0].plot(df["Round"], det_fpr.fillna(0.0), label=name, color=color, linewidth=2)
+        if det_frr is not None:
+            axes[1].plot(df["Round"], det_frr.fillna(0.0), label=name, color=color, linewidth=2)
+        if "QuarantineFPR" in df.columns:
+            axes[0].plot(df["Round"], df["QuarantineFPR"].fillna(0.0), color=color,
+                         linewidth=1, linestyle="--", alpha=0.5)
+            axes[1].plot(df["Round"], df["QuarantineFRR"].fillna(0.0), color=color,
+                         linewidth=1, linestyle="--", alpha=0.5)
+    axes[0].set_title(f"{title} — Detection FPR (tracejado = ocupacao de quarentena)")
+    axes[0].set_xlabel("Round"); axes[0].set_ylabel("DetectionFPR")
+    axes[0].grid(True, alpha=0.3); axes[0].legend(loc="upper left", fontsize=8)
+    axes[0].set_ylim(-0.01, max(0.30, axes[0].get_ylim()[1]))
+    axes[1].set_title(f"{title} — Detection FRR")
+    axes[1].set_xlabel("Round"); axes[1].set_ylabel("DetectionFRR")
+    axes[1].grid(True, alpha=0.3); axes[1].legend(loc="upper left", fontsize=8)
+    axes[1].set_ylim(-0.01, max(0.60, axes[1].get_ylim()[1]))
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_fpr_frr_individual(system_dir: Path, min_rounds: int, out_dir: Path) -> None:
+    """Per-cc FPR x FRR plots (cc3, cc5, cc7) plus a cc3-vs-cc7 comparison."""
+    loaded: dict[int, pd.DataFrame] = {}
+    for cc, fname in INDIVIDUAL_FPR_FRR.items():
+        path = system_dir / fname
+        if not path.exists():
+            continue
+        try:
+            loaded[cc] = _load_fpr_frr_csv(path, min_rounds=min_rounds)
+        except Exception as exc:
+            print(f"Ignorando {fname} (cc={cc}): {exc}")
+    for cc, df in loaded.items():
+        label = DEFENSE_LABELS.get(cc, f"cc={cc}")
+        _draw_fpr_frr({label: df}, label, out_dir / f"plot_fpr_frr_cc{cc}.png")
+    if 3 in loaded and 7 in loaded:
+        cmp = {DEFENSE_LABELS[3]: loaded[3], DEFENSE_LABELS[7]: loaded[7]}
+        _draw_fpr_frr(cmp, "cc=3 vs cc=7", out_dir / "plot_fpr_frr_cc3_vs_cc7.png")
+
+
 def plot_accuracy(accuracy_df: pd.DataFrame, out_dir: Path) -> None:
     if accuracy_df.empty:
         return
@@ -333,6 +385,7 @@ def main() -> None:
     summary = summarize_tail(df, args.tail_rounds)
     summary.to_csv(args.out_dir / "cc_attack_type_summary.csv", index=False)
     plot_fpr_frr_by_round(fpr_frr, args.out_dir)
+    plot_fpr_frr_individual(args.system_dir, args.tail_rounds, args.out_dir)
     plot_accuracy(accuracy, args.out_dir)
     plot_summary(summary, args.out_dir)
     plot_label(summary, args.out_dir)
