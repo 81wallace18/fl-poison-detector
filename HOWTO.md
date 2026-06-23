@@ -64,41 +64,92 @@ Esperado: `cuda: True | GPU: NVIDIA GeForce RTX 5060 Ti` + `imports OK`.
 
 ---
 
-## Comando unico para rodar tudo do zero
+## Reexecutar tudo limpo
 
-O script abaixo limpa artefatos gerados, regenera MNIST + `train_mal/`, faz warm-up limpo, dumpa os `state_dicts` com o modelo global anterior de cada round, treina DistilBERT e MLP, roda `cc=2`, `cc=3`, `cc=6` e `cc=7`, executa o notebook e grava os graficos.
-
-```bash
-./scripts/run_full_monza.sh
-```
-
-Para rodar em background com log automatico:
+No host remoto, o caminho historico do projeto tem o typo `Projetcs`:
 
 ```bash
-./scripts/run_full_monza.sh --background
-tail -f rerun_full_*.log
+ssh wallace-pc-lacis
+cd ~/Projetcs/Rafael/jpt
+tmux new -s fl-rerun
 ```
 
-Variaveis uteis:
+Os scripts `run_full_*` sao destrutivos: no inicio eles removem dumps, detectores, CSVs do `PFLlibMonza/system/` e resultados `.h5` do dataset correspondente. Use estes comandos quando quiser um experimento novo, sem misturar com arquivos antigos.
+
+### MNIST completo (`cc=3` vs `cc=7`)
+
+Este e o caminho recomendado para comparar MONZA original (`cc=3`) contra MLP (`cc=7`) sem gastar tempo com DistilBERT:
 
 ```bash
-GLOBAL_ROUNDS=50 DEVICE_ID=0 ./scripts/run_full_monza.sh --background
+SKIP_BERT=1 GLOBAL_ROUNDS=300 TIMES=10 \
+RUN_LOG=logs/full_mnist_clean_$(date +%Y%m%d_%H%M%S).log \
+bash scripts/run_full_monza.sh
 ```
 
-O run completo ja usa por padrao uma configuracao estavel:
-
-- BERT (`cc=6`): `BERT_THRESHOLD_KEY=combined_label_fpr05`, usando score binario + head auxiliar de `malicious_label`.
-- MLP (`cc=7`): `MLP_THRESHOLD_KEY=combined_label_fpr05`, usando o threshold calibrado da rodada para evitar FPR explosivo entre retreinos.
-
-Para sobrescrever manualmente:
+### CIFAR10 completo (`cc=3` vs `cc=7`)
 
 ```bash
-BERT_THRESHOLD_KEY=combined_label_fpr05 \
-MLP_THRESHOLD_KEY=combined_label_fpr05 \
-./scripts/run_full_monza.sh --background
+SKIP_BERT=1 GLOBAL_ROUNDS=300 TIMES=10 \
+RUN_LOG=logs/full_cifar_clean_$(date +%Y%m%d_%H%M%S).log \
+bash scripts/run_full_cifar10.sh
 ```
 
-Use esse formato apenas se quiser sobrescrever os defaults.
+Com `SKIP_BERT=1`, os scripts fazem: gerar/regenerar dataset, criar `train_mal/`, rodar dump `cc=5`, treinar MLP, rodar baseline limpo/sem defesa, rodar `cc=3`, rodar `cc=7` e gerar os summaries/graficos. Eles nao rodam `cc=2` nem `cc=6`.
+
+### Reexecutar apenas `cc=7` com label head ativada
+
+Depois de um full run, use `rerun_cc7.sh` para reusar o dataset existente, retreinar somente o MLP e reexecutar `cc=7`. Isto preserva os baselines `cc=3`/`cc=5` ja arquivados.
+
+MNIST:
+
+```bash
+DATASET_NAME=MNIST GLOBAL_ROUNDS=300 TIMES=10 \
+OVERSAMPLE_LABEL_FACTOR=4 LABEL_LOSS_WEIGHT=4 \
+RUN_LOG=logs/rerun_cc7_mnist_activated_$(date +%Y%m%d_%H%M%S).log \
+bash scripts/rerun_cc7.sh
+```
+
+CIFAR10:
+
+```bash
+DATASET_NAME=Cifar10 GLOBAL_ROUNDS=300 TIMES=10 \
+OVERSAMPLE_LABEL_FACTOR=4 LABEL_LOSS_WEIGHT=4 \
+RUN_LOG=logs/rerun_cc7_cifar_activated_$(date +%Y%m%d_%H%M%S).log \
+bash scripts/rerun_cc7.sh
+```
+
+`rerun_cc7.sh` arquiva os CSVs em `analysis_outputs/` para MNIST e em `analysis_outputs_cifar10/` para CIFAR10, mas nao regenera todos os graficos automaticamente. Se rodar apenas esse script, confira primeiro os CSVs.
+
+### Verificar se completou
+
+```bash
+tail -80 logs/full_mnist_clean_*.log
+tail -80 logs/full_cifar_clean_*.log
+tail -80 logs/rerun_cc7_*_activated_*.log
+```
+
+Um run completo deve chegar em `DONE`, `All done!` ou `DONE rerun cc7 <DATASET>`. Para conferir por CSV:
+
+```bash
+python3 - <<'PY'
+import csv, glob, collections
+for p in glob.glob("analysis_outputs*/fpr_frr_results_7.csv") + glob.glob("PFLlibMonza/system/fpr_frr_results_7.csv"):
+    rows = list(csv.DictReader(open(p)))
+    by = collections.defaultdict(list)
+    for r in rows:
+        by[r["RunID"]].append(int(r["Round"]))
+    print(p)
+    for rid, rs in by.items():
+        print(" ", rid, min(rs), max(rs), len(rs))
+PY
+```
+
+Cada seed completo deve aparecer com round maximo `300`.
+
+O run completo usa por padrao uma configuracao estavel:
+
+- BERT (`cc=6`, quando `SKIP_BERT=0`): `BERT_THRESHOLD_KEY=combined_label_fpr05`, usando score binario + head auxiliar de `malicious_label`.
+- MLP (`cc=7`): `MLP_THRESHOLD_KEY=combined_label_fpr05`, usando o threshold calibrado para evitar FPR explosivo entre retreinos.
 
 Defaults relevantes para `malicious_label`:
 
@@ -221,10 +272,13 @@ cd ../..
 ```
 
 **Saídas**:
-- `PFLlibMonza/system/fpr_frr_results_{2,3,6,7}.csv`: FPR/FRR global por round.
-- `PFLlibMonza/system/cc_detail_results_{6,7}.csv`: decisão por cliente/round, com `AttackType`, hits e scores.
-- `PFLlibMonza/system/cc_type_results_{6,7}.csv`: FPR benigno e recall por tipo de ataque, incluindo `malicious_label`.
-Todos incluem `RunID`; use sempre o último `RunID` para não misturar execuções.
+- `PFLlibMonza/system/fpr_frr_results_{3,7}.csv`: `DetectionFPR/FRR` e `QuarantineFPR/FRR` por round.
+- `PFLlibMonza/system/cc_detail_results_{3,7}.csv`: decisão por cliente/round, com `AttackType`, hits e scores.
+- `PFLlibMonza/system/cc_type_results_{3,7}.csv`: FPR benigno e recall por tipo de ataque, incluindo `malicious_label`.
+- `analysis_outputs/`: copia arquivada dos CSVs e graficos do MNIST.
+- `analysis_outputs_cifar10/`: copia arquivada dos CSVs e graficos do CIFAR10.
+
+Todos incluem `RunID`; confira o ultimo `RunID` completo antes de comparar execucoes diferentes.
 
 ### Passo 3b — Sweep curto de thresholds
 
@@ -251,6 +305,8 @@ Saidas principais:
 - `analysis_outputs/threshold_sweep/plot_threshold_tradeoff.png`
 
 Escolha o menor threshold agressivo que mantenha `malicious_label recall >= 90%`, `UploadFPR <= 5%` e melhor acuracia final entre os candidatos validos.
+
+> **Limite atual**: `MLP_THRESHOLD_VALUE` sobrescreve apenas o threshold binario do MLP. Ele nao varre `label_threshold` separado da label head. Para estudar a label head de `malicious_label`, use primeiro `rerun_cc7.sh` com `OVERSAMPLE_LABEL_FACTOR=4 LABEL_LOSS_WEIGHT=4`; se ainda precisar de sweep fino, implemente threshold manual separado para `label_score` antes de concluir.
 
 ---
 
@@ -281,9 +337,9 @@ cd ../..
 .venv/bin/jupyter notebook notebook_monza_analysis.ipynb
 ```
 
-Gera todos os gráficos do projeto em um lugar: FPR/FRR por round, trade-off scatter, métricas offline dos detectores, FPR/recall por tipo de ataque e foco em `malicious_label`. O notebook carrega CSV antigo e novo, escolhe o último `RunID` completo quando existir e compara `cc=2`, `cc=3`, `cc=6` e `cc=7`.
+Gera todos os gráficos do projeto em um lugar: FPR/FRR por round, trade-off scatter, métricas offline dos detectores, FPR/recall por tipo de ataque e foco em `malicious_label`. O notebook carrega CSV antigo e novo, escolhe o último `RunID` completo quando existir e compara as defesas disponíveis.
 
-Os PNGs são gerados somente em `analysis_outputs/`. O script completo também remove `plot_*.png` antigos da raiz para evitar confusão com resultados anteriores.
+Os PNGs de MNIST ficam em `analysis_outputs/`; os de CIFAR10 ficam em `analysis_outputs_cifar10/` quando gerados pelo script CIFAR. Se voce rodar apenas `rerun_cc7.sh`, os CSVs sao atualizados, mas graficos anteriores podem ficar stale. Nesse caso, confie nos CSVs ou regenere os plots.
 
 Principais saídas:
 - `plot_fpr_frr_by_round.png`
@@ -294,12 +350,22 @@ Principais saídas:
 
 ### Scripts opcionais
 
-O notebook acima já roda tudo. Este script fica como alternativa CLI:
+O notebook acima já roda tudo. Este script fica como alternativa CLI para MNIST:
 
 ```bash
 .venv/bin/python scripts/plot_cc_attack_types.py \
     --system-dir PFLlibMonza/system \
     --out-dir analysis_outputs \
+    --tail-rounds 30
+```
+
+Para CIFAR10:
+
+```bash
+.venv/bin/python scripts/plot_cc_attack_types.py \
+    --system-dir PFLlibMonza/system \
+    --out-dir analysis_outputs_cifar10 \
+    --dataset Cifar10 \
     --tail-rounds 30
 ```
 
@@ -360,6 +426,56 @@ jpt/
 ### "FileNotFoundError: '../dataset/MNIST/train/...'"
 
 Dataset MNIST particionado pra `num_clients` errado. Edite `dataset/generate_MNIST.py:13` (`num_clients = 100`) e re-rode `python generate_MNIST.py noniid - dir`. O `check()` em `dataset/utils/dataset_utils.py` regera automaticamente se `num_clients` divergir do `config.json`.
+
+### Run parou no meio
+
+Primeiro confirme se ainda existe processo:
+
+```bash
+ps -eo pid,etime,cmd | grep -E 'run_full|rerun_cc7|main.py|detector_mlp' | grep -v grep
+```
+
+Depois confira log, espaco em disco e completude por `RunID`:
+
+```bash
+tail -120 logs/rerun_cc7_*.log
+df -h . PFLlibMonza/results /tmp
+python3 - <<'PY'
+import csv, collections
+for p in ["PFLlibMonza/system/fpr_frr_results_7.csv"]:
+    rows = list(csv.DictReader(open(p)))
+    by = collections.defaultdict(list)
+    for r in rows:
+        by[r["RunID"]].append(int(r["Round"]))
+    print(p)
+    for rid, rs in by.items():
+        print(rid, min(rs), max(rs), len(rs))
+PY
+```
+
+Se um `RunID` parar antes do round `300`, trate o run como parcial. Para resultado final, reexecute o comando inteiro; usar `-prev` num processo novo nao preserva o estado de RNG entre seeds.
+
+### Grafico nao mudou depois de `rerun_cc7.sh`
+
+`rerun_cc7.sh` arquiva CSVs de `cc7`, mas nao recompila todos os PNGs automaticamente. Se o horario dos PNGs for anterior ao novo `report.json`/CSV, o grafico esta stale. Compare pelos CSVs ou rode `scripts/plot_cc_attack_types.py` de novo para o dataset certo.
+
+### Resultado bom em `analysis_outputs_cifar10/` parece MNIST
+
+Nao confie apenas no nome da pasta. Confira os totais de `cc_detail_results_7.csv`: se aparecer algo como `benign=210605` e `malicious_label=588`, esse arquivo bate com o run MNIST preservado, mesmo se estiver dentro de backup da pasta CIFAR. Para CIFAR10, os totais historicos foram diferentes, por exemplo `benign=211454` e `malicious_label=853`.
+
+### `cc7` bom no geral mas ruim em `malicious_label`
+
+No CIFAR10, o recall alto impresso em log pode ser recall geral de uploads maliciosos, dominado por `random`, `shuffle` e `zeros`. Para saber se label flip melhorou, leia `cc_detail_results_7.csv` e filtre `AttackType == malicious_label`.
+
+Ative a head auxiliar e reexecute só `cc7`:
+
+```bash
+DATASET_NAME=Cifar10 GLOBAL_ROUNDS=300 TIMES=10 \
+OVERSAMPLE_LABEL_FACTOR=4 LABEL_LOSS_WEIGHT=4 \
+bash scripts/rerun_cc7.sh
+```
+
+Se o `report.json` mostrar `malicious_label_recall` offline maior, mas o deployment continuar baixo, o problema nao e grafico: o sinal aprendido nao generalizou para a dinamica FL do CIFAR. Nesse caso, o proximo passo e adicionar/recuperar uma defesa comportamental com validacao publica ou score direcionado, em vez de depender apenas do fingerprint dos pesos.
 
 ### `cc=6` removendo muitos clientes ou ruim em `malicious_label`
 
