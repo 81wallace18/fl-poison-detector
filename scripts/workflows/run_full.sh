@@ -199,7 +199,8 @@ PY
 
   if [[ "$PROFILE" == "mnist" ]]; then
     monza_log "Execute notebook plots"
-    ANALYSIS_OUT="$ANALYSIS_OUT" "$JUPYTER" nbconvert --to notebook --execute \
+    REPO_ROOT="$ROOT" ANALYSIS_OUT="$ANALYSIS_OUT" \
+      "$JUPYTER" nbconvert --to notebook --execute \
       notebooks/notebook_monza_analysis.ipynb \
       --output notebook-monza-analysis.executed.ipynb --output-dir "$RUN_OUTPUT" \
       || monza_log "WARN: nbconvert falhou; seguindo para os summaries CLI"
