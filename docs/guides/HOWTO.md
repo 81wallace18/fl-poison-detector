@@ -157,12 +157,6 @@ ls PFLlibMonza/system/{fpr_frr_results_7.csv,cc_detail_results_7.csv,cc_type_res
 ### Gerar analises
 
 ```bash
-.venv/bin/python scripts/plot_cc_attack_types.py \
-  --system-dir PFLlibMonza/system \
-  --out-dir artifacts/runs/cifar10/manual/analysis \
-  --dataset Cifar10 \
-  --tail-rounds 30
-
 REPO_ROOT="$PWD" \
 DATASET_NAME=Cifar10 \
 ANALYSIS_OUT="$PWD/artifacts/runs/cifar10/manual/analysis" \
@@ -170,7 +164,15 @@ ANALYSIS_OUT="$PWD/artifacts/runs/cifar10/manual/analysis" \
   notebooks/notebook_monza_analysis.ipynb \
   --output notebook-monza-analysis.executed.ipynb \
   --output-dir artifacts/runs/cifar10/manual
+
+.venv/bin/python scripts/plot_cc_attack_types.py \
+  --system-dir PFLlibMonza/system \
+  --out-dir artifacts/runs/cifar10/manual/analysis \
+  --dataset Cifar10 \
+  --tail-rounds 30
 ```
+
+Execute o notebook antes do CLI: o notebook remove PNGs antigos para evitar misturar runs, e o CLI completa o conjunto final de graficos.
 
 ## 7. Variaveis principais
 
