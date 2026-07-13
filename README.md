@@ -70,8 +70,8 @@ O run completo usa por padrão `ROUND_INIT_ATK=5` e `DUMP_START_ROUND=6`: os rou
 ## Quick start
 
 ```bash
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python --index-strategy unsafe-best-match -r requirements.txt
 .venv/bin/python src/bench_grid.py
 ```
 

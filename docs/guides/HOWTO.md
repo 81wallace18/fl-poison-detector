@@ -13,9 +13,16 @@ Resultados historicos ficam em [`MONZA_RESULTS.md`](../results/MONZA_RESULTS.md)
 ## Setup
 
 ```bash
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python \
+  --index-strategy unsafe-best-match \
+  -r requirements.txt
 ```
+
+O `--index-strategy unsafe-best-match` e necessario porque o arquivo de
+requisitos combina o PyPI com o indice CUDA do PyTorch. Sem essa opcao, o
+`uv` pode selecionar o indice CUDA para dependencias gerais e declarar a
+resolucao impossivel.
 
 Todos os comandos devem rodar da raiz do repo. Quando o cwd for `PFLlibMonza/system`, use `../../.venv/bin/python`.
 
@@ -310,8 +317,10 @@ python3 scripts/check_runtime_sync.py
 Crie a venv da raiz:
 
 ```bash
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python \
+  --index-strategy unsafe-best-match \
+  -r requirements.txt
 ```
 
 ### Usar um caminho de log personalizado

@@ -1,6 +1,6 @@
 --extra-index-url https://download.pytorch.org/whl/cu130
 
-# Python 3.11. Single environment for root detectors + PFLlibMonza.
+# Python 3.12. Single environment for root detectors + PFLlibMonza.
 torch
 torchvision
 
