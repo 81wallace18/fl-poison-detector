@@ -1,6 +1,6 @@
 # HOWTO - pipeline MONZA com MLP
 
-Este guia parte de um clone limpo e usa somente o fluxo ativo: dataset real do MONZA, detector MLP e defesa `cc=7`. Execute todos os blocos a partir da raiz do repositorio, exceto quando o bloco contiver um `cd` explicito.
+Este guia parte de um clone limpo e usa somente o fluxo ativo: dataset real do MONZA, baselines, detector MLP e defesa `cc=7`. Execute todos os blocos a partir da raiz do repositorio, exceto quando o bloco contiver um `cd` explicito.
 
 ## 1. Clonar e instalar
 
@@ -151,6 +151,28 @@ Artefatos esperados:
 ls artifacts/models/cifar10/mlp/{model.pt,scaler.pkl,feature_names.json,report.json,score_diagnostics.csv}
 ```
 
+### Rodar os baselines e o cc=3
+
+Estes experimentos geram as referencias usadas pelos graficos comparativos. O primeiro e o baseline limpo, o segundo usa ataques sem defesa e o terceiro usa a defesa `cc=3`.
+
+```bash
+rm -f PFLlibMonza/results/Cifar10_FedAvg_5_100.0_30_test_*.h5
+
+cd PFLlibMonza/system
+../../.venv/bin/python main.py \
+  -m CNN -data Cifar10 -nmc 0 -nc 100 -jr 1 \
+  -atk all -ria 5 -cc 5 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
+
+../../.venv/bin/python main.py \
+  -m CNN -data Cifar10 -nmc 30 -nc 100 -jr 1 \
+  -atk all -ria 5 -cc 5 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
+
+../../.venv/bin/python main.py \
+  -m CNN -data Cifar10 -nmc 30 -nc 100 -jr 1 \
+  -atk all -ria 5 -cc 3 -gr 50 -t 1 -ls 1 -did 0 -rfake 1
+cd ../..
+```
+
 ### Rodar a defesa cc=7
 
 ```bash
@@ -180,7 +202,11 @@ ANALYSIS_OUT="$PWD/artifacts/runs/cifar10/manual/analysis" \
   notebooks/notebook_monza_analysis.ipynb \
   --output notebook-monza-analysis.executed.ipynb \
   --output-dir artifacts/runs/cifar10/manual
+```
 
+O notebook ja gera e exibe o conjunto completo de graficos. Para gerar somente os mesmos artefatos sem executar as celulas exploratorias, use diretamente o CLI:
+
+```bash
 .venv/bin/python scripts/plot_cc_attack_types.py \
   --system-dir PFLlibMonza/system \
   --out-dir artifacts/runs/cifar10/manual/analysis \
@@ -189,7 +215,7 @@ ANALYSIS_OUT="$PWD/artifacts/runs/cifar10/manual/analysis" \
   --num-malicious 30
 ```
 
-Execute o notebook antes do CLI: o notebook remove PNGs antigos para evitar misturar runs, e o CLI completa o conjunto final de graficos.
+Nao e necessario executar o notebook e o CLI para a mesma analise; escolha uma das duas formas.
 
 A comparacao adicional de acuracia entre `cc=3`, `cc=5` sem defesa e `cc=7` fica isolada em `analysis/comparison_cc3_cc5_cc7/`. Os graficos existentes na raiz de `analysis/` nao sao alterados.
 
