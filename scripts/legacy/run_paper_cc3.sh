@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 VENV_PY="${VENV_PY:-$ROOT/.venv/bin/python}"
 SYSTEM_DIR="$ROOT/PFLlibMonza/system"
 DATASET_DIR="$ROOT/PFLlibMonza/dataset"
@@ -20,8 +20,8 @@ TIMES="${TIMES:-10}"
 RATE_FAKE="${RATE_FAKE:-1}"
 ROUND_INIT_ATK="${ROUND_INIT_ATK:-5}"
 DIRICHLET_ALPHA="${DIRICHLET_ALPHA:-0.2}"
-ANALYSIS_OUT="${ANALYSIS_OUT:-$ROOT/analysis_outputs_paper_cc3_${DATASET_NAME}}"
-RUN_LOG="${RUN_LOG:-$ROOT/rerun_paper_cc3_${DATASET_NAME}_$(date +%Y%m%d_%H%M%S).log}"
+ANALYSIS_OUT="${ANALYSIS_OUT:-$ROOT/artifacts/runs/legacy/paper_cc3_${DATASET_NAME}}"
+RUN_LOG="${RUN_LOG:-$ANALYSIS_OUT/run.log}"
 RUN_STATUS_FILE="$ANALYSIS_OUT/RUN_STATUS.txt"
 CSV_BACKUP_DIR="$ANALYSIS_OUT/pre_run_system_csv_backup"
 GENERATED_CSV_DIR="$ANALYSIS_OUT/system_csvs"
