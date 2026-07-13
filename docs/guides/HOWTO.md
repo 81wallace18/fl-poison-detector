@@ -12,7 +12,19 @@ Resultados historicos ficam em [`MONZA_RESULTS.md`](../results/MONZA_RESULTS.md)
 
 ## Setup
 
+Em uma maquina nova, clone o repositorio e entre na raiz:
+
 ```bash
+git clone https://github.com/81wallace18/fl-poison-detector.git
+cd fl-poison-detector
+```
+
+O projeto usa `uv`. No host principal ele fica em `~/.local/bin`, portanto
+garanta que esse diretorio esteja no `PATH` antes de criar o ambiente:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+uv --version
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python \
   --index-strategy unsafe-best-match \
