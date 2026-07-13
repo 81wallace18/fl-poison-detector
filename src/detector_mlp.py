@@ -441,7 +441,7 @@ def main() -> None:
             f"PUBLIC_VAL_DIR invalido: {PUBLIC_VAL_DIR!r}. "
             "Use um diretorio public_val limpo e separado do test."
         )
-    ARTIFACTS_DIR.mkdir(exist_ok=True)
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print('[1/4] Carregando state_dicts e extraindo features...')
     X, y, types, entries = load_dataset()
