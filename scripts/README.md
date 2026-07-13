@@ -9,7 +9,7 @@ Os scripts ativos ficam em uma unica pasta e devem ser executados a partir da ra
 | `run_full.sh` | Gera o dataset, treina o MLP, roda os baselines, `cc=3`, `cc=7` e as analises. |
 | `rerun_cc7.sh` | Reusa o dataset existente, retreina o MLP e roda somente `cc=7`. |
 | `create_label_flip_train_mal.py` | Cria `train_mal/` para o ataque de label flip. |
-| `plot_cc_attack_types.py` | Gera CSVs e graficos de FPR, FRR, acuracia e recall por ataque. |
+| `plot_cc_attack_types.py` | Gera CSVs e graficos existentes, mais a comparacao de acuracia `cc=3/5/7` em uma subpasta. |
 | `check_project.sh` | Valida scripts, Python, testes, links, runtime e notebook. |
 
 Os workflows exigem um perfil explicito:

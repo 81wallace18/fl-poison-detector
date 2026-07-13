@@ -169,10 +169,13 @@ ANALYSIS_OUT="$PWD/artifacts/runs/cifar10/manual/analysis" \
   --system-dir PFLlibMonza/system \
   --out-dir artifacts/runs/cifar10/manual/analysis \
   --dataset Cifar10 \
-  --tail-rounds 30
+  --tail-rounds 30 \
+  --num-malicious 30
 ```
 
 Execute o notebook antes do CLI: o notebook remove PNGs antigos para evitar misturar runs, e o CLI completa o conjunto final de graficos.
+
+A comparacao adicional de acuracia entre `cc=3`, `cc=5` sem defesa e `cc=7` fica isolada em `analysis/comparison_cc3_cc5_cc7/`. Os graficos existentes na raiz de `analysis/` nao sao alterados.
 
 ## 7. Variaveis principais
 

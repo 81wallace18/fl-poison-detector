@@ -13,6 +13,7 @@ import pandas as pd
 from _fpr_frr_io import load_fpr_frr as _load_fpr_frr_csv
 
 SELECTED_CCS = [3, 7]
+COMPARISON_CCS = [3, 5, 7]
 ATTACK_TYPES = ["malicious_label", "malicious_random", "malicious_shuffle", "malicious_zeros"]
 DEFENSE_LABELS = {
     3: "cc=3 (cosseno+score)",
@@ -58,6 +59,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("PFLlibMonza/results"),
         help="Directory containing *_FedAvg_*_test_*.h5 result files.",
+    )
+    parser.add_argument(
+        "--num-malicious",
+        type=int,
+        default=30,
+        help="Malicious-client count used to select the cc=3/5/7 comparison H5 files.",
     )
     return parser.parse_args()
 
@@ -141,6 +148,47 @@ def load_accuracy(results_dir: Path, dataset: str, selected_ccs: list[int]) -> p
                     "Round": round_idx,
                     "Accuracy": float(value),
                     "Defense": DEFENSE_LABELS.get(cc, f"cc={cc}"),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def find_scenario_h5(
+    results_dir: Path, dataset: str, cc: int, num_malicious: int
+) -> Path | None:
+    candidates = sorted(
+        results_dir.glob(
+            f"{dataset}_FedAvg_{cc}_*_{num_malicious}_test_*.h5"
+        ),
+        key=lambda path: path.stat().st_mtime,
+    )
+    return candidates[-1] if candidates else None
+
+
+def load_three_way_accuracy(
+    results_dir: Path, dataset: str, num_malicious: int
+) -> pd.DataFrame:
+    rows = []
+    for cc in COMPARISON_CCS:
+        path = find_scenario_h5(results_dir, dataset, cc, num_malicious)
+        if path is None:
+            print(
+                f"Comparacao: H5 ausente para cc={cc}, "
+                f"dataset={dataset}, nmal={num_malicious}"
+            )
+            continue
+        with h5py.File(path, "r") as h5:
+            if "rs_test_acc" not in h5:
+                continue
+            acc = np.asarray(h5["rs_test_acc"], dtype=float)
+        for round_idx, value in enumerate(acc):
+            rows.append(
+                {
+                    "Round": round_idx,
+                    "Accuracy": float(value),
+                    "CC": cc,
+                    "Defense": DEFENSE_LABELS[cc],
+                    "File": path.name,
                 }
             )
     return pd.DataFrame(rows)
@@ -310,6 +358,64 @@ def plot_accuracy(accuracy_df: pd.DataFrame, out_dir: Path) -> None:
     plt.close(fig)
 
 
+def plot_three_way_accuracy(accuracy_df: pd.DataFrame, out_dir: Path) -> None:
+    if accuracy_df.empty:
+        return
+    comparison_dir = out_dir / "comparison_cc3_cc5_cc7"
+    comparison_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+    for name, group in accuracy_df.groupby("Defense", sort=False):
+        ax.plot(
+            group["Round"],
+            group["Accuracy"],
+            label=name,
+            color=COLORS.get(name, "#333333"),
+            linewidth=2,
+        )
+    ax.set_title("Acuracia global: cc=3 vs cc=5 vs cc=7")
+    ax.set_xlabel("Round")
+    ax.set_ylabel("Acuracia de teste")
+    ax.set_ylim(0.0, 1.02)
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="lower right", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(
+        comparison_dir / "plot_global_accuracy_cc3_cc5_cc7.png",
+        dpi=160,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+
+    summary = (
+        accuracy_df.groupby(["CC", "Defense", "File"], sort=False)["Accuracy"]
+        .agg(Rounds="size", BestAccuracy="max", FinalAccuracy="last")
+        .reset_index()
+    )
+    summary.to_csv(
+        comparison_dir / "accuracy_summary_cc3_cc5_cc7.csv", index=False
+    )
+
+    x = np.arange(len(summary))
+    width = 0.36
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.bar(x - width / 2, summary["BestAccuracy"], width, label="Melhor")
+    ax.bar(x + width / 2, summary["FinalAccuracy"], width, label="Final")
+    ax.set_title("Melhor acuracia e acuracia final")
+    ax.set_ylabel("Acuracia de teste")
+    ax.set_ylim(0.0, 1.02)
+    ax.set_xticks(x, summary["Defense"], rotation=12, ha="right")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(
+        comparison_dir / "plot_best_final_accuracy_cc3_cc5_cc7.png",
+        dpi=160,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+
+
 def plot_recall_by_round(df: pd.DataFrame, out_dir: Path) -> None:
     recall_round = df[
         (df["CC"].isin(SELECTED_CCS))
@@ -382,11 +488,15 @@ def main() -> None:
     df = load_cc_type(args.system_dir, args.tail_rounds, SELECTED_CCS)
     fpr_frr = load_fpr_frr(args.system_dir, args.tail_rounds, SELECTED_CCS)
     accuracy = load_accuracy(args.results_dir, args.dataset, SELECTED_CCS)
+    comparison_accuracy = load_three_way_accuracy(
+        args.results_dir, args.dataset, args.num_malicious
+    )
     summary = summarize_tail(df, args.tail_rounds)
     summary.to_csv(args.out_dir / "cc_attack_type_summary.csv", index=False)
     plot_fpr_frr_by_round(fpr_frr, args.out_dir)
     plot_fpr_frr_individual(args.system_dir, args.tail_rounds, args.out_dir)
     plot_accuracy(accuracy, args.out_dir)
+    plot_three_way_accuracy(comparison_accuracy, args.out_dir)
     plot_summary(summary, args.out_dir)
     plot_label(summary, args.out_dir)
     plot_recall_by_round(df, args.out_dir)
