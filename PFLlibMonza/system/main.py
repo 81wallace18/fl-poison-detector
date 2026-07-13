@@ -509,7 +509,7 @@ if __name__ == "__main__":
     parser.add_argument('-atk', '--atack', type = str, default='random')
     parser.add_argument('-ria', '--round_init_atk', type = int, default=0)
     parser.add_argument('-rfake', '--rate_client_fake', type = float, default=1.0) # de 0 a 1
-    parser.add_argument('-cc', '--cluster_comparation', type = int, default=5) # 2 cluster cosseno, 3 cosseno+score, 5 dump, 6 DistilBERT, 7 MLP
+    parser.add_argument('-cc', '--cluster_comparation', type = int, default=5) # 2 cluster cosseno, 3 cosseno+score, 5 dump, 7 MLP
     parser.add_argument('--label_flip_epochs', type=int, default=5,
         help='Epocas locais do ataque malicious_label. Afeta apenas clientes maliciosos label-flip.')
     parser.add_argument('--label_flip_lr_multiplier', type=float, default=1.0,
@@ -519,12 +519,7 @@ if __name__ == "__main__":
     parser.add_argument('--dump_start_round', type=int, default=0,
         help='Primeiro round salvo por --dump_state_dicts. Use com -ria para warm-up limpo antes do dump.')
     parser.add_argument('--detector_dir', type=str, default='',
-        help='Path do detector treinado. Usado em -cc 6 (DistilBERT) e -cc 7 (MLP).')
-    parser.add_argument('--bert_threshold_key', type=str, default='threshold_label_fpr05',
-        choices=['tuned', 'threshold_fpr05', 'threshold_label_fpr05', 'combined_label_fpr05'],
-        help='Chave de threshold do metrics.json usada pelo DistilBERT.')
-    parser.add_argument('--bert_threshold_value', type=float, default=None,
-        help='Threshold binario manual do DistilBERT. Se setado, sobrescreve --bert_threshold_key.')
+        help='Path do detector MLP treinado. Usado em -cc 7.')
     parser.add_argument('--mlp_threshold_key', type=str, default='threshold_label_fpr05',
         choices=['tuned', 'threshold_fpr05', 'threshold_label_fpr05', 'combined_label_fpr05'],
         help='Chave de threshold do report.json usada pelo MLP.')
@@ -536,8 +531,8 @@ if __name__ == "__main__":
         raise ValueError("--rate_client_fake/-rfake deve ficar entre 0 e 1.")
     if args.dump_start_round < 0:
         raise ValueError("--dump_start_round deve ser >= 0.")
-    if args.cluster_comparation not in (2, 3, 5, 6, 7):
-        raise ValueError("-cc suportado no fluxo normalizado: 2 cluster, 3 score, 5 dump/sem defesa, 6 DistilBERT, 7 MLP.")
+    if args.cluster_comparation not in (2, 3, 5, 7):
+        raise ValueError("-cc suportado no fluxo normalizado: 2 cluster, 3 score, 5 dump/sem defesa, 7 MLP.")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
     os.environ["DATASET_NAME"] = args.dataset

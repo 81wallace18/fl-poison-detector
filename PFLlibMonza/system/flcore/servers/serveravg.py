@@ -8,7 +8,6 @@ from collections import Counter
 import csv
 import os
 from flcore.detector import fl_save
-from flcore.detector.cc import ClientCheck
 from flcore.detector.cc_mlp import ClientCheckMLP
 class FedAvg(Server):
     def __init__(self, args, times):
@@ -21,8 +20,6 @@ class FedAvg(Server):
             self.csv_filename = 'fpr_frr_results_3.csv'
         elif self.cc ==2:
             self.csv_filename = 'fpr_frr_results_2.csv'
-        elif self.cc ==6:
-            self.csv_filename = 'fpr_frr_results_6.csv'
         elif self.cc ==7:
             self.csv_filename = 'fpr_frr_results_7.csv'
         else:
@@ -33,12 +30,11 @@ class FedAvg(Server):
         )
         self.cc_detail_filename = f'cc_detail_results_{self.cc}.csv'
         self.cc_type_filename = f'cc_type_results_{self.cc}.csv'
-        if self.cc in (2, 3, 6, 7):
+        if self.cc in (2, 3, 7):
             detail_header = [
                 'RunID', 'Round', 'CC', 'ClientID', 'AttackType', 'IsMaliciousRound',
-                'MaliciousGroup', 'Removed', 'Reason', 'MLPHit', 'BERTHit',
-                'MLPScore', 'BERTScore', 'MLPLabelScore', 'BERTLabelScore',
-                'MLPBinaryHit', 'BERTBinaryHit', 'MLPLabelHit', 'BERTLabelHit',
+                'MaliciousGroup', 'Removed', 'Reason', 'MLPHit', 'MLPScore',
+                'MLPLabelScore', 'MLPBinaryHit', 'MLPLabelHit',
                 'BinaryThreshold', 'LabelThreshold', 'DecisionRule', 'BaselineScore',
             ]
             self._ensure_csv_header(self.cc_detail_filename, detail_header)
@@ -50,19 +46,7 @@ class FedAvg(Server):
         self.dump_dir = getattr(args, 'dump_state_dicts', '') or ''
         self.dump_start_round = int(getattr(args, 'dump_start_round', 0))
         self.client_check = None
-        self.bert_client_check = None
-        self.mlp_client_check = None
-        if self.cc == 6:
-            detector_dir = getattr(args, 'detector_dir', '') or ''
-            if not detector_dir:
-                raise ValueError("cc=6 requer --detector_dir apontando pro modelo treinado (ex: jpt/detector_final/).")
-            print(f"[cc=6] Carregando detector DistilBERT de {detector_dir}")
-            self.client_check = ClientCheck(
-                detector_dir,
-                threshold_key=getattr(args, 'bert_threshold_key', 'threshold_label_fpr05'),
-                threshold_value=getattr(args, 'bert_threshold_value', None),
-            )
-        elif self.cc == 7:
+        if self.cc == 7:
             detector_dir = getattr(args, 'detector_dir', '') or ''
             if not detector_dir:
                 raise ValueError("cc=7 requer --detector_dir apontando pro MLP artifacts dir (ex: jpt/detector_mlp_monza_cnn_mnist/).")
@@ -119,10 +103,9 @@ class FedAvg(Server):
                     self.run_id, row['round'], row['cc'], row['client_id'], row['attack_type'],
                     int(row['is_malicious_round']), int(row['malicious_group']),
                     int(row['removed']), row['reason'], int(row['mlp_hit']),
-                    int(row['bert_hit']), row['mlp_score'], row['bert_score'],
-                    row.get('mlp_label_score', 0.0), row.get('bert_label_score', 0.0),
-                    int(row.get('mlp_binary_hit', False)), int(row.get('bert_binary_hit', False)),
-                    int(row.get('mlp_label_hit', False)), int(row.get('bert_label_hit', False)),
+                    row['mlp_score'], row.get('mlp_label_score', 0.0),
+                    int(row.get('mlp_binary_hit', False)),
+                    int(row.get('mlp_label_hit', False)),
                     row.get('binary_threshold', ''), row.get('label_threshold', ''),
                     row.get('decision_rule', 'binary'),
                     row.get('baseline_score', 0.0),
@@ -167,15 +150,10 @@ class FedAvg(Server):
                 'removed': removed,
                 'reason': reason if removed else 'none',
                 'mlp_hit': False,
-                'bert_hit': False,
                 'mlp_score': 0.0,
-                'bert_score': 0.0,
                 'mlp_label_score': 0.0,
-                'bert_label_score': 0.0,
                 'mlp_binary_hit': False,
-                'bert_binary_hit': False,
                 'mlp_label_hit': False,
-                'bert_label_hit': False,
                 'binary_threshold': '',
                 'label_threshold': '',
                 'decision_rule': reason,
@@ -408,9 +386,8 @@ class FedAvg(Server):
 
                 if self.cc==5:
                     print("vai rolar nada")
-                if self.cc in (6, 7):
+                if self.cc == 7:
                     oi = time.time()
-                    detector_name = 'DistilBERT' if self.cc == 6 else 'MLP'
                     clients_by_id = {c.id: c for c in self.clients}
                     true_positive_uploads = 0
                     malicious_uploads = 0
@@ -423,27 +400,12 @@ class FedAvg(Server):
                         if is_malicious_round:
                             malicious_uploads += 1
                         sd = self.uploaded_models[idx].state_dict()
-                        mlp_result = {'is_malicious': False, 'score': 0.0, 'label_score': 0.0}
-                        bert_result = {'is_malicious': False, 'score': 0.0, 'label_score': 0.0}
-                        if self.cc == 6:
-                            bert_result = self.client_check.classify(
-                                sd, global_state_dict=global_state_before_round
-                            )
-                            bert_hit = bool(bert_result['is_malicious'])
-                            mlp_hit = False
-                        else:
-                            mlp_result = self.client_check.classify(
-                                sd, global_state_dict=global_state_before_round
-                            )
-                            mlp_hit = bool(mlp_result['is_malicious'])
-                            bert_hit = False
-                        removed = bool((self.cc == 6 and bert_hit) or (self.cc == 7 and mlp_hit))
-                        reason_parts = []
-                        if mlp_hit:
-                            reason_parts.append('mlp')
-                        if bert_hit:
-                            reason_parts.append('bert')
-                        reason = '+'.join(reason_parts) if reason_parts else 'none'
+                        mlp_result = self.client_check.classify(
+                            sd, global_state_dict=global_state_before_round
+                        )
+                        mlp_hit = bool(mlp_result['is_malicious'])
+                        removed = mlp_hit
+                        reason = 'mlp' if mlp_hit else 'none'
                         detail_rows.append({
                             'round': i,
                             'cc': self.cc,
@@ -454,32 +416,18 @@ class FedAvg(Server):
                             'removed': removed,
                             'reason': reason if removed else 'none',
                             'mlp_hit': mlp_hit,
-                            'bert_hit': bert_hit,
                             'mlp_score': float(mlp_result.get('score', 0.0)),
-                            'bert_score': float(bert_result.get('score', 0.0)),
                             'mlp_label_score': float(mlp_result.get('label_score', 0.0)),
-                            'bert_label_score': float(bert_result.get('label_score', 0.0)),
                             'mlp_binary_hit': bool(mlp_result.get('binary_hit', False)),
-                            'bert_binary_hit': bool(bert_result.get('binary_hit', False)),
                             'mlp_label_hit': bool(mlp_result.get('label_hit', False)),
-                            'bert_label_hit': bool(bert_result.get('label_hit', False)),
-                            'binary_threshold': (
-                                mlp_result.get('binary_threshold')
-                                if self.cc == 7 else bert_result.get('binary_threshold')
-                            ),
-                            'label_threshold': (
-                                mlp_result.get('label_threshold')
-                                if self.cc == 7 else bert_result.get('label_threshold')
-                            ),
-                            'decision_rule': (
-                                mlp_result.get('decision_rule', 'binary')
-                                if self.cc == 7 else bert_result.get('decision_rule', 'binary')
-                            ),
+                            'binary_threshold': mlp_result.get('binary_threshold'),
+                            'label_threshold': mlp_result.get('label_threshold'),
+                            'decision_rule': mlp_result.get('decision_rule', 'binary'),
                         })
                         if removed:
                             if is_malicious_round:
                                 true_positive_uploads += 1
-                            print(f'cc={self.cc}: removing client {client_id} ({detector_name} detector)')
+                            print(f'cc={self.cc}: removing client {client_id} (MLP detector)')
                             self.set_client_quarantine(client_id)
                             del self.uploaded_models[idx]
                             del self.ids[idx]
@@ -505,8 +453,6 @@ class FedAvg(Server):
             if self.cc ==2:
                 quarantine_fpr, quarantine_frr = self.compute_fpr_frr_cluster(self.removed_clients, self.cluster_tuples)
             if self.cc ==3:
-                quarantine_fpr, quarantine_frr = self.compute_fpr_frr()
-            if self.cc ==6:
                 quarantine_fpr, quarantine_frr = self.compute_fpr_frr()
             if self.cc ==7:
                 quarantine_fpr, quarantine_frr = self.compute_fpr_frr()

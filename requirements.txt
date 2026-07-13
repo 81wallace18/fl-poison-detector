@@ -4,15 +4,8 @@
 torch
 torchvision
 
-# Detector NLP / MLP
-transformers
-datasets==2.19.2
+# Detector MLP
 safetensors
-evaluate==0.4.2
-pyarrow==20.0.0
-peft
-accelerate
-bitsandbytes
 joblib
 tqdm
 

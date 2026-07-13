@@ -1,6 +1,6 @@
-"""Salvamento de state_dicts FL no formato consumido por detector.py / detector_mlp.py.
+"""Salvamento de state_dicts FL no formato consumido por detector_mlp.py.
 
-Schema (espelha bench_grid.py:221-235):
+Schema do dataset de treino do detector:
   {out_dir}/{sample_id}.safetensors  -- pesos do cliente
   {out_dir}/{sample_id}.json         -- metadata do cliente
   {out_dir}/global_rXXX.safetensors  -- modelo global antes do round
