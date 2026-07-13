@@ -63,6 +63,15 @@ mnist_data/
 # Logs
 *.log
 
+# Local experiment workspace
+/artifacts/
+/analysis_outputs*/
+/results_mnist_*/
+/results_cifar_*/
+/sweeps/
+/bench_grid_results.json
+/.notebook/
+
 # Plots gerados pelo notebook (rerodar gera de novo)
 plot_*.png
 
@@ -79,6 +88,10 @@ PFLlibMonza/system/results/
 PFLlibMonza/system/models/
 PFLlibMonza/system/*.h5
 PFLlibMonza/system/*.deb
+PFLlibMonza/system/f.csv
+PFLlibMonza/system/fpr_frr_results_*.csv
+PFLlibMonza/system/cc_detail_results_*.csv
+PFLlibMonza/system/cc_type_results_*.csv
 PFLlibMonza/results/
 PFLlibMonza/results.zip
 PFLlibMonza/.claude/
