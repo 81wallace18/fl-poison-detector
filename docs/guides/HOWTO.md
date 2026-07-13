@@ -192,6 +192,7 @@ Artefatos esperados: `model.pt`, `scaler.pkl`, `feature_names.json`, `report.jso
 
 ```bash
 cd PFLlibMonza/system
+PUBLIC_VAL_DIR=../dataset/MNIST/public_val DATASET_NAME=MNIST \
 ../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
   -cc 7 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 -ria 5 \
   --detector_dir ../../artifacts/models/mnist/mlp \
