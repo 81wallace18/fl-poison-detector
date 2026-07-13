@@ -1,9 +1,9 @@
 # <img src="docs/imgs/logo-green.png" alt="icon" height="24" style="vertical-align:sub;"/> PFLlib: Personalized Federated Learning Library and Benchmark
 
 > **Nota — fork integrado ao `fl-poison-detector`**: Este diretório é uma cópia do [PFLlibMonza](https://github.com/VeigarGit/PFLlibMonza) (que por sua vez é fork do [PFLlib upstream](https://github.com/TsingZ0/PFLlib)) com modificações pra defesa contra clientes maliciosos via detector DistilBERT/MLP. Para o pipeline completo (gerar dataset → treinar detector → defesa em produção como `cc=6`, `cc=7`, `cc=8`, `cc=9` ou `cc=10`), ver os docs no diretório pai:
-> - [`../HOWTO.md`](../HOWTO.md) — passo-a-passo
-> - [`../MONZA_RESULTS.md`](../MONZA_RESULTS.md) — resultados experimentais
-> - [`../EVOLUTION.md`](../EVOLUTION.md) — narrativa metodológica
+> - [`../docs/guides/HOWTO.md`](../docs/guides/HOWTO.md) — passo-a-passo
+> - [`../docs/results/MONZA_RESULTS.md`](../docs/results/MONZA_RESULTS.md) — resultados experimentais
+> - [`../docs/history/EVOLUTION.md`](../docs/history/EVOLUTION.md) — narrativa metodológica
 >
 > Modificações neste fork:
 > - `system/main.py`: novos args `--dump_state_dicts`, `--detector_dir`, `--bert_detector_dir`, `--mlp_detector_dir` e checks de holdout

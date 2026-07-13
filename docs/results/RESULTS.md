@@ -1,6 +1,6 @@
 # Detector de updates maliciosos em FL
 
-> Este documento é o relatório do **bench original** (dataset sintético gerado pelo `BertModelsclassify.ipynb`/`bench_grid.py`). Para resultados em **FL real** (PFLlibMonza, 100 clientes não-IID, 50 rounds com 4 defesas comparadas), ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
+> Este documento é o relatório do **bench original** (dataset sintético gerado pelo `notebooks/BertModelsclassify.ipynb`/`src/bench_grid.py`). Para resultados em **FL real** (PFLlibMonza, 100 clientes não-IID, 50 rounds com 4 defesas comparadas), ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
 
 Estudo comparativo de duas abordagens para detectar **state_dicts maliciosos** enviados por clientes em Federated Learning. Cliente FL é uma `FedAvgCNN` (~580k pesos); detector classifica binariamente um update vindo de cliente como `benigno` ou `malicioso` antes da agregação.
 
@@ -35,7 +35,7 @@ Features explícitas dão sinal pronto pro MLP — não precisa "redescobrir" es
 
 ## Os 4 datasets do grid
 
-Controlados por dois flags no notebook (`BertModelsclassify.ipynb` cell 3):
+Controlados por dois flags no notebook (`notebooks/BertModelsclassify.ipynb` cell 3):
 
 | flag | True | False |
 |---|---|---|
@@ -68,13 +68,13 @@ python3.11 -m venv .venv
 ```
 
 `bench_grid.py` faz tudo:
-- Treina FedAvgCNN em MNIST 1× (cache em `mnist_data/`)
-- Gera 4 datasets em `state_dicts_grid/{1_leakage,2_hard,3_pretrained_hard,4_pretrained_easy}/`
+- Treina FedAvgCNN em MNIST 1× (cache em `artifacts/cache/mnist/`)
+- Gera 4 datasets em `artifacts/dumps/synthetic/{1_leakage,2_hard,3_pretrained_hard,4_pretrained_easy}/`
 - Roda `detector.py` (DistilBERT) e `detector_mlp.py` (MLP) em cada
 - Imprime tabela final + breakdown por ataque
-- Salva tudo em `bench_grid_results.json`
+- Salva tudo em `artifacts/runs/synthetic/bench_grid_results.json`
 
-Logs por run em `detector_grid_runs/{variante}/{distilbert,mlp}/log.txt`.
+Logs por run em `artifacts/models/synthetic/{variante}/{distilbert,mlp}/log.txt`.
 
 ### Variáveis de ambiente úteis
 
@@ -85,11 +85,11 @@ Logs por run em `detector_grid_runs/{variante}/{distilbert,mlp}/log.txt`.
 ## Estrutura
 
 ```
-detector.py            DistilBERT+LoRA sobre tokens-de-bins
-detector_mlp.py        MLP sobre features
-features.py            extract_features(state_dict) -> (np.ndarray[60], names)
-bench_grid.py          orquestrador do grid 4×2
-BertModelsclassify.ipynb  notebook de exploração + geração de datasets ad-hoc
+src/detector.py        DistilBERT+LoRA sobre tokens-de-bins
+src/detector_mlp.py    MLP sobre features
+src/features.py        extract_features(state_dict) -> (np.ndarray[60], names)
+src/bench_grid.py      orquestrador do grid 4×2
+notebooks/BertModelsclassify.ipynb  notebook de exploração + geração de datasets ad-hoc
 requirements.txt       deps unificadas para detectores, MONZA e notebooks
 ```
 
@@ -103,4 +103,4 @@ requirements.txt       deps unificadas para detectores, MONZA e notebooks
 
 Para detectar updates maliciosos em FL com benigno definido como "modelo global treinado + ruído de 1 step local", **features estatísticas/espectrais/espaciais combinadas com um MLP simples são suficientes**: F1 0.96–1.0 nas 4 variantes testadas, com 0–1% de FPR. Transformer sobre tokens-de-bins é dead-end estrutural pra esse problema (~0.88 plateau).
 
-Conclusão validada em FL real na **[Fase 7](EVOLUTION.md#fase-7--integração-com-fl-real-monza--pfllib)**: MLP+features mantém Pareto-superioridade sobre DistilBERT e sobre os baselines do PFLlib (cluster cosseno, cosseno+score). O `cc=8` é uma defesa MONZA posterior ao bench sintético, criada para testar label flip com validação pública. Ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
+Conclusão validada em FL real na **[Fase 7](../history/EVOLUTION.md#fase-7--integração-com-fl-real-monza--pfllib)**: MLP+features mantém Pareto-superioridade sobre DistilBERT e sobre os baselines do PFLlib (cluster cosseno, cosseno+score). O `cc=8` é uma defesa MONZA posterior ao bench sintético, criada para testar label flip com validação pública. Ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).

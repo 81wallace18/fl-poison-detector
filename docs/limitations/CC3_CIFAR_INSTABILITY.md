@@ -25,7 +25,7 @@ Média dos 6 sobreviventes ≈ 48.6% ≈ paper; os 4 colapsos puxam a média pra
   **nunca reseta** → bans de 2, 4, 8, 16, 32… rounds.
 - `serverbase.select_clients` (L116-136): exclui quem tem `roundsQuarent > 0` do pool elegível.
 
-Evidência (`analysis_outputs_cifar10/`):
+Evidência histórica (`artifacts/archive/legacy-layout/analysis_outputs_cifar10/`):
 - `QuarantineFPR` termina em **0.85–0.96** em quase todos os runs → 85–96% dos benignos presos.
 - `cc_type_results_3.csv` (`Total` = modelos elegíveis/round): pool cai de 100 → single digits nos
   últimos ~40 rounds; nos seeds ruins chega a **1–4 clientes** por muitos rounds.
@@ -52,4 +52,4 @@ agrupados, os scores cosine ficam separados e o pool nunca esvazia.
 Como o **cc7 (MLP+features) supera o cc3 com folga e é estável no CIFAR** (51% vs 33%, ±1.1 vs ±19.5),
 a comparação já favorece o detector deste trabalho mesmo sem corrigir o cc3. Arquivos-chave:
 `PFLlibMonza/system/flcore/servers/serveravg.py`, `serverbase.py`;
-dados em `analysis_outputs_cifar10/{fpr_frr_results_3,cc_type_results_3}.csv` e h5 por seed.
+dados arquivados em `artifacts/archive/legacy-layout/analysis_outputs_cifar10/` e h5 por seed.

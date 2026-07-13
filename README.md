@@ -30,32 +30,40 @@ Validação posterior em FL real (PFLlibMonza, 100 clientes Dirichlet non-IID, 3
 > `DetectionFPR/FRR`**, que só os runs novos logam (ex.: cc=3 MNIST 0.012/0.026, CIFAR10 0.066/0.060).
 > DetectionFPR/FRR de cc2/6/7 está **pendente de re-run** com o logging atual.
 
-MLP+features ficou como melhor detector final no fluxo normalizado. Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
+MLP+features ficou como melhor detector final no fluxo normalizado. Detalhes em [`MONZA_RESULTS.md`](docs/results/MONZA_RESULTS.md).
 
 Documentação:
-- [`HOWTO.md`](HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=2/cc=3/cc=6/cc=7)
-- [`MONZA_RESULTS.md`](MONZA_RESULTS.md) — resultados experimentais em FL real
-- [`RESULTS.md`](RESULTS.md) — bench original 4×2 (dataset sintético)
-- [`EVOLUTION.md`](EVOLUTION.md) — como o projeto evoluiu
-- [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb) — gráficos comparativos das defesas MONZA (`cc=2`/`cc=3`/`cc=6`/`cc=7`)
+- [`HOWTO.md`](docs/guides/HOWTO.md) — passo-a-passo do pipeline FL real (gera dataset com MONZA → treina detector → defesas cc=2/cc=3/cc=6/cc=7)
+- [`MONZA_RESULTS.md`](docs/results/MONZA_RESULTS.md) — resultados experimentais em FL real
+- [`RESULTS.md`](docs/results/RESULTS.md) — bench original 4×2 (dataset sintético)
+- [`EVOLUTION.md`](docs/history/EVOLUTION.md) — como o projeto evoluiu
+- [`notebook_monza_analysis.ipynb`](notebooks/notebook_monza_analysis.ipynb) — gráficos comparativos das defesas MONZA (`cc=2`/`cc=3`/`cc=6`/`cc=7`)
 
 > ⚠️ **Limitações conhecidas (leia antes de comparar):**
-> - [`CC3_CIFAR_INSTABILITY.md`](CC3_CIFAR_INSTABILITY.md) — cc3 (MONZA original) colapsa em ~40% dos seeds no CIFAR (quarentena 2ⁿ → pool starvation); média 33±19.5 vs paper 47.6.
-> - [`CC6_BERT_LIMITATION.md`](CC6_BERT_LIMITATION.md) — cc6 (BERT) é cego a `shuffle` por design → colapsa; resultado negativo.
+> - [`CC3_CIFAR_INSTABILITY.md`](docs/limitations/CC3_CIFAR_INSTABILITY.md) — cc3 (MONZA original) colapsa em ~40% dos seeds no CIFAR (quarentena 2ⁿ → pool starvation); média 33±19.5 vs paper 47.6.
+> - [`CC6_BERT_LIMITATION.md`](docs/limitations/CC6_BERT_LIMITATION.md) — cc6 (BERT) é cego a `shuffle` por design → colapsa; resultado negativo.
+
+Valide a configuracao sem iniciar um experimento:
+
+```bash
+bash scripts/run_full_monza.sh --dry-run
+bash scripts/run_full_cifar10.sh --dry-run
+```
 
 Run completo MONZA do zero:
 
 ```bash
-./scripts/run_full_monza.sh --background
-tail -f rerun_full_*.log
+SKIP_BERT=1 GLOBAL_ROUNDS=300 TIMES=10 \
+bash scripts/run_full_monza.sh --background
 ```
 
 Sweep curto de thresholds para melhorar `malicious_label` sem retreinar os detectores:
 
 ```bash
 ./scripts/sweep_monza_thresholds.sh --background
-tail -f threshold_sweep_*.log
 ```
+
+Veja [`scripts/README.md`](scripts/README.md) para separar fluxo principal, helpers e scripts legados.
 
 O run completo usa por padrão `ROUND_INIT_ATK=5` e `DUMP_START_ROUND=6`: os rounds iniciais fazem warm-up limpo, depois o dump salva cada update junto com o modelo global anterior do round. `cc=6` e `cc=7` usam `combined_label_fpr05`, que combina score binario e head auxiliar de `malicious_label` com threshold calibrado na própria rodada, mantendo FPR benigno controlado. As features contextuais usam `PFLlibMonza/dataset/MNIST/public_val/`, separado do `test/` usado para avaliação.
 
@@ -67,9 +75,10 @@ python3.11 -m venv .venv
 .venv/bin/python src/bench_grid.py
 ```
 
-`bench_grid.py` faz tudo: treina baseline em MNIST, gera 4 variantes do dataset, roda os 2 detectores em cada uma, imprime tabela final + breakdown por ataque, salva tudo em `bench_grid_results.json`. ~30–40 min na RTX 5060 Ti.
+`bench_grid.py` faz tudo: treina baseline em MNIST, gera 4 variantes do dataset, roda os 2 detectores em cada uma, imprime tabela final + breakdown por ataque e salva o resultado em `artifacts/runs/synthetic/bench_grid_results.json`. ~30–40 min na RTX 5060 Ti.
 
-Sempre executar a partir da **raiz do projeto** — paths como `state_dicts/`, `mnist_data/` etc. são relativos ao cwd.
+Sempre executar a partir da **raiz do projeto**. Os paths configuráveis são
+resolvidos a partir desse diretório.
 
 O ambiente Python é único: use sempre `.venv/` na raiz. MONZA também deve ser executado com essa venv (`../../.venv/bin/python` quando o cwd for `PFLlibMonza/system`).
 
@@ -77,14 +86,11 @@ Nota sobre `malicious_label`: o runtime MONZA agora exige `PFLlibMonza/dataset/M
 
 ## Estrutura
 
-```
+```text
 .
-├── README.md, RESULTS.md, EVOLUTION.md   # docs do bench original (sintético)
-├── HOWTO.md, MONZA_RESULTS.md            # docs da integração FL real (PFLlibMonza)
-├── requirements.txt, .gitignore
-├── BertModelsclassify.ipynb              # notebook ad-hoc com flags de geração
-├── notebook_monza_analysis.ipynb         # gráficos comparativos das defesas MONZA
-├── bench_grid_results.json               # resultados do bench 4×2
+├── README.md                              # entrada e visão geral
+├── docs/                                 # guias, resultados, histórico e limitações
+├── notebooks/                            # exploração e análise MONZA
 ├── src/
 │   ├── detector.py                       # DistilBERT+LoRA sobre pesos→bins
 │   ├── detector_mlp.py                   # MLP sobre features handcrafted
@@ -94,19 +100,29 @@ Nota sobre `malicious_label`: o runtime MONZA agora exige `PFLlibMonza/dataset/M
 │   ├── cc.py                             # ClientCheck DistilBERT standalone
 │   ├── cc_mlp.py                         # ClientCheckMLP — usado pelo MONZA
 │   └── fl_save.py                        # helper de dump de state_dicts
+├── scripts/
+│   ├── workflows/                        # implementação dos experimentos
+│   ├── tools/                            # preparação, análise e verificações
+│   ├── legacy/                           # runners históricos
+│   └── run_full_*.sh                     # wrappers públicos compatíveis
+├── artifacts/                            # resultados locais, ignorados pelo Git
 └── PFLlibMonza/                          # fork PFLlib (FL simulator) integrado
     └── system/flcore/detector/           # inferência MONZA: cc/cc_mlp/fl_save/features
 ```
 
-Saídas geradas em runtime (todas no `.gitignore`, raiz do projeto):
+Saídas geradas em runtime ficam sob `artifacts/` e não entram no Git:
 
 | Diretório | Conteúdo |
 |---|---|
-| `state_dicts/` ou `state_dicts_grid/{variante}/` | `.safetensors` + `.json` por amostra |
-| `detector_final/` | Modelo DistilBERT+LoRA híbrido treinado + scaler contextual + `metrics.json` |
-| `detector_mlp_artifacts/` | MLP + scaler + `feature_names.json` + `report.json` |
-| `detector_grid_runs/{variante}/{detector}/` | Logs e artefatos por run do grid |
-| `mnist_data/` | Cache do MNIST (baixado pelo `bench_grid`) |
+| `artifacts/runs/<dataset>/<run-id>/` | Logs, CSVs, plots e análises de cada execução. |
+| `artifacts/models/<dataset>/` | Detectores BERT e MLP treinados. |
+| `artifacts/dumps/<dataset>/` | Dumps temporários de `state_dicts`. |
+| `artifacts/cache/` | Datasets baixados pelo benchmark sintético. |
+| `artifacts/archive/` | Resultados anteriores preservados e deduplicados. |
+
+Os cinco módulos usados no runtime existem em `src/` e em
+`PFLlibMonza/system/flcore/detector/`. Rode
+`python3 scripts/check_runtime_sync.py` após qualquer alteração nesses arquivos.
 
 ## Documentação por arquivo
 
@@ -159,9 +175,9 @@ Orquestrador único que faz benchmark completo. Etapas:
 1. Treina **`pretrained_base`** = `FedAvgCNN` em MNIST (10 epochs, ~1–2 min, cache em `mnist_data/`).
 2. Gera 4 datasets em `state_dicts_grid/{1_leakage, 2_hard, 3_pretrained_hard, 4_pretrained_easy}/` (cada um N amostras de cada classe).
 3. Roda `detector.py` e `detector_mlp.py` via subprocess para cada variante (8 treinos sequenciais), com env vars apontando pros dirs corretos. Streaming dos logs em tempo real, prefixados com `[variante DB|MLP]`.
-4. Lê `metrics.json` / `report.json` de cada run, monta tabela final + breakdown por ataque, salva em `bench_grid_results.json`.
+4. Lê `metrics.json` / `report.json` de cada run, monta tabela final + breakdown por ataque e salva em `artifacts/runs/synthetic/bench_grid_results.json`.
 
-### `BertModelsclassify.ipynb`
+### `notebooks/BertModelsclassify.ipynb`
 
 Notebook de exploração + geração ad-hoc de dataset:
 - **Cell 1**: definições (`FedAvgCNN`, ataques, helpers).
@@ -203,7 +219,7 @@ STATE_DICTS_DIR=meus_dados FINAL_MODEL_DIR=./meu_modelo .venv/bin/python src/det
 - Seeds fixas: `SEED=42` (data split) e `MODEL_SEED=15880` (treino do DistilBERT)
 - `torch.backends.cudnn.deterministic=True` no MLP
 - `bench_grid.py` é determinístico exceto pela parte de download do MNIST (a primeira vez)
-- Resultado esperado bate com `bench_grid_results.json` ±0.01 F1
+- Resultado esperado bate com `artifacts/runs/synthetic/bench_grid_results.json` ±0.01 F1
 
 ## Limitações conhecidas
 

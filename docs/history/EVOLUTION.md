@@ -120,7 +120,7 @@ Em fase 5 (1000 amostras), o mesmo cenário deu `shuffle=80%`.
 
 ## Fase 7 — integração com FL real (MONZA / PFLlib)
 
-Até a Fase 6, todo o pipeline rodava em **dataset sintético**: gerador local no notebook (`BertModelsclassify.ipynb`) instanciava `FedAvgCNN` random ou pretrained, aplicava ataques sintéticos, e o detector aprendia. O threat model era cuidadoso, mas a *origem* dos pesos era um bench acadêmico — nada de cliente FL real treinando em data não-IID.
+Até a Fase 6, todo o pipeline rodava em **dataset sintético**: gerador local no notebook (`notebooks/BertModelsclassify.ipynb`) instanciava `FedAvgCNN` random ou pretrained, aplicava ataques sintéticos, e o detector aprendia. O threat model era cuidadoso, mas a *origem* dos pesos era um bench acadêmico — nada de cliente FL real treinando em data não-IID.
 
 A pergunta natural que faltava: **o detector treinado em pesos sintéticos converge num cenário FL real?** Vale como defesa em produção, ou era artefato da geração?
 
@@ -180,7 +180,7 @@ Bate com a banda esperada do bench Fase 5 (DistilBERT plateia em ~0.88, MLP ~0.9
 - VGG/Cifar10 cortado por disco — sem evidência de generalização além de FedAvgCNN/MNIST.
 - `cc=8/9/10` ainda sem métrica fechada pós-correção de `train_mal` — não comparar como vencedores antes de novo run.
 
-Detalhes em [`MONZA_RESULTS.md`](MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](notebook_monza_analysis.ipynb).
+Detalhes em [`MONZA_RESULTS.md`](../results/MONZA_RESULTS.md). Análise visual em [`notebook_monza_analysis.ipynb`](../../notebooks/notebook_monza_analysis.ipynb).
 
 ## Fora do escopo (futuro possível)
 

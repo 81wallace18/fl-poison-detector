@@ -143,13 +143,12 @@ métrica do paper (ver nota acima sobre DetectionFPR/FRR per-round):
 
 ## Reprodutibilidade
 
-Comandos completos em `/home/wallace/.claude/plans/16-06-27-04-2026-rafael-veiga-lazy-dream.md` (Fases C.0 → E.4).
+Comandos atuais em [`HOWTO.md`](../guides/HOWTO.md).
 
-Artefatos preservados:
-- `state_dicts_monza_cnn_mnist/` (12 GB) — dataset gerado
-- `detector_monza_cnn_mnist/` (~3 MB) — DistilBERT+LoRA treinado
-- `detector_mlp_monza_cnn_mnist/` (~80 KB) — MLP treinado
-- `PFLlibMonza/system/fpr_frr_results_{2,3,6,7}.csv` — resultados FL deste relatório
-- `PFLlibMonza/system/fpr_frr_results_{8,9,10}.csv` — esperado em novo run com defesas pós-relatório
+Os CSVs e plots históricos deste checkout ficam em
+`artifacts/archive/legacy-layout/`. Dumps de `state_dicts` e modelos treinados
+são grandes e devem ser regenerados pelos workflows quando necessários. Novos
+runs gravam dados em `artifacts/runs/`, `artifacts/models/` e
+`artifacts/dumps/`.
 
-Análise visual em `notebook_monza_analysis.ipynb`.
+Análise visual em `notebooks/notebook_monza_analysis.ipynb`.

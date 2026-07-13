@@ -167,7 +167,7 @@ def load_entries() -> List[Dict]:
     ]
     assert files, (
         f"Nenhum .safetensors em '{STATE_DICTS_DIR}/'. "
-        "Rode o notebook BertModelsclassify.ipynb pra gerar os state_dicts."
+        "Rode notebooks/BertModelsclassify.ipynb pra gerar os state_dicts."
     )
     entries: List[Dict] = []
     for f in tqdm(files, desc='preprocess state_dicts', unit='file'):
