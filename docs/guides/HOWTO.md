@@ -1,28 +1,12 @@
-# HOWTO - pipeline MONZA -> dataset -> detector -> defesa
+# HOWTO - pipeline MONZA com MLP
 
-Este repo integra **PFLlibMonza** (simulador FL real em `PFLlibMonza/`) com os detectores em `src/`.
+Este guia parte de um clone limpo e usa somente o fluxo ativo: dataset real do MONZA, detector MLP e defesa `cc=7`. Execute todos os blocos a partir da raiz do repositorio, exceto quando o bloco contiver um `cd` explicito.
 
-Fluxo principal:
-
-1. MONZA gera o particionamento e dumpa updates de clientes como `.safetensors` + `.json`.
-2. `src/detector_mlp.py` treina o detector MLP+features; DistilBERT e opcional.
-3. MONZA roda as defesas e grava CSVs com `DetectionFPR/FRR`, `QuarantineFPR/FRR` e recall por tipo de ataque.
-
-Resultados historicos ficam em [`MONZA_RESULTS.md`](../results/MONZA_RESULTS.md). Guia dos scripts em [`scripts/README.md`](../../scripts/README.md).
-
-## Setup
-
-Em uma maquina nova, clone o repositorio e entre na raiz:
+## 1. Clonar e instalar
 
 ```bash
 git clone https://github.com/81wallace18/fl-poison-detector.git
 cd fl-poison-detector
-```
-
-O projeto usa `uv`. No host principal ele fica em `~/.local/bin`, portanto
-garanta que esse diretorio esteja no `PATH` antes de criar o ambiente:
-
-```bash
 export PATH="$HOME/.local/bin:$PATH"
 uv --version
 uv venv --python 3.12 .venv
@@ -31,206 +15,146 @@ uv pip install --python .venv/bin/python \
   -r requirements.txt
 ```
 
-O `--index-strategy unsafe-best-match` e necessario porque o arquivo de
-requisitos combina o PyPI com o indice CUDA do PyTorch. Sem essa opcao, o
-`uv` pode selecionar o indice CUDA para dependencias gerais e declarar a
-resolucao impossivel.
+O indice adicional em `requirements.txt` fornece o PyTorch CUDA. `unsafe-best-match` permite que o `uv` resolva as demais dependencias pelo PyPI.
 
-Todos os comandos devem rodar da raiz do repo. Quando o cwd for `PFLlibMonza/system`, use `../../.venv/bin/python`.
-
-Verificacao rapida:
+Valide o checkout:
 
 ```bash
-cd PFLlibMonza/system
-../../.venv/bin/python -c "
-import torch
-from flcore.detector.cc import ClientCheck
-from flcore.detector.cc_mlp import ClientCheckMLP
-from flcore.detector import fl_save
-print('torch:', torch.__version__, '| cuda:', torch.cuda.is_available())
-print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')
-print('imports OK')
-"
-cd ../..
+bash scripts/check_project.sh
 ```
 
-Esperado no host principal: `cuda: True`, GPU detectada e `imports OK`.
+## 2. Conferir o workflow
 
-## Gerar Dataset Manualmente
+Os perfis aceitos sao `cifar10` e `mnist`. O perfil e obrigatorio para evitar executar o dataset errado.
 
-Os scripts `run_full_*` ja fazem isto automaticamente. Use manualmente so para inspecao ou debug:
+```bash
+bash scripts/run_full.sh cifar10 --dry-run
+bash scripts/rerun_cc7.sh cifar10 --dry-run
+```
+
+O dry-run confere a sincronizacao do runtime e imprime todos os caminhos sem gerar dataset ou modelo.
+
+## 3. Executar CIFAR-10 completo
+
+```bash
+GLOBAL_ROUNDS=300 TIMES=10 \
+bash scripts/run_full.sh cifar10 --background
+```
+
+O comando imprime o PID e o caminho do log. Acompanhe com:
+
+```bash
+tail -f artifacts/runs/cifar10/*/run.log
+```
+
+O workflow executa, nesta ordem:
+
+1. gera o particionamento CIFAR-10 non-IID;
+2. cria `train_mal/` para label flip;
+3. roda `cc=5` para criar os dumps de treinamento;
+4. treina e calibra o MLP;
+5. roda os baselines limpo e sem defesa;
+6. roda `cc=3` e `cc=7`;
+7. executa o notebook e os summaries CLI.
+
+Para MNIST, use o mesmo comando com o perfil `mnist`.
+
+## 4. Validacao rapida
+
+Este comando percorre o pipeline completo com escala reduzida. Ele valida integracao e formatos, mas nao produz metricas cientificas comparaveis ao experimento oficial.
+
+```bash
+GLOBAL_ROUNDS=2 TIMES=1 \
+DUMP_GLOBAL_ROUNDS=8 DUMP_TIMES=1 \
+NUM_CLIENTS=10 NUM_MALICIOUS=4 \
+ROUND_INIT_ATK=0 DUMP_START_ROUND=1 \
+MONZA_EXPECTED_ROWS=2 MONZA_TAIL_ROUNDS=2 \
+bash scripts/run_full.sh cifar10
+```
+
+## 5. Reexecutar somente cc=7
+
+Use depois de um full run. O comando reutiliza o dataset existente, recria o dump, retreina o MLP e substitui somente as saidas de `cc=7`.
+
+```bash
+GLOBAL_ROUNDS=300 TIMES=10 \
+bash scripts/rerun_cc7.sh cifar10 --background
+```
+
+## 6. Pipeline manual CIFAR-10
+
+Use estes comandos para depurar uma etapa especifica. O workflow da secao anterior ja executa todos eles.
+
+### Gerar o dataset
 
 ```bash
 cd PFLlibMonza/dataset
-../../.venv/bin/python generate_MNIST.py noniid - dir \
+../../.venv/bin/python generate_Cifar10.py noniid - dir \
   --num-clients 100 \
   --dirichlet-alpha 0.2
 cd ../..
 
 .venv/bin/python scripts/create_label_flip_train_mal.py \
-  --dataset-dir PFLlibMonza/dataset/MNIST \
+  --dataset-dir PFLlibMonza/dataset/Cifar10 \
   --num-classes 10
 
-find PFLlibMonza/dataset/MNIST/train -name '*.npz' | wc -l       # esperado: 100
-find PFLlibMonza/dataset/MNIST/train_mal -name '*.npz' | wc -l   # esperado: 100
+find PFLlibMonza/dataset/Cifar10/train -name '*.npz' | wc -l
+find PFLlibMonza/dataset/Cifar10/train_mal -name '*.npz' | wc -l
 ```
 
-Para CIFAR10, troque `generate_MNIST.py` por `generate_Cifar10.py` e `MNIST` por `Cifar10`.
+Os dois contadores devem imprimir `100`.
 
-`train_mal/` e obrigatorio para `malicious_label`: o runtime MONZA falha de proposito se ele nao existir.
-
-## Fluxo Recomendado
-
-Os comandos abaixo sao destrutivos para artefatos gerados: removem dumps, detectores, CSVs em `PFLlibMonza/system/` e resultados `.h5` do dataset alvo. Use quando quiser um experimento novo e limpo.
-
-Antes de iniciar, valide o perfil e os caminhos sem alterar arquivos:
-
-```bash
-bash scripts/run_full_monza.sh --dry-run
-bash scripts/run_full_cifar10.sh --dry-run
-```
-
-### MNIST Completo
-
-```bash
-SKIP_BERT=1 GLOBAL_ROUNDS=300 TIMES=10 \
-bash scripts/run_full_monza.sh --background
-```
-
-### CIFAR10 Completo
-
-```bash
-SKIP_BERT=1 GLOBAL_ROUNDS=300 TIMES=10 \
-bash scripts/run_full_cifar10.sh --background
-```
-
-Com `SKIP_BERT=1`, o fluxo roda: gerar dataset, criar `train_mal/`, dumpar updates com `cc=5`, treinar MLP, rodar baseline limpo/sem defesa, rodar `cc=3`, rodar `cc=7` e gerar summaries/plots. Ele nao roda `cc=2` nem `cc=6`.
-
-### Reexecutar Apenas `cc=7`
-
-Use depois de um full run, quando quiser reusar o dataset existente e retreinar apenas o MLP.
-
-MNIST:
-
-```bash
-DATASET_NAME=MNIST GLOBAL_ROUNDS=300 TIMES=10 \
-OVERSAMPLE_LABEL_FACTOR=4 LABEL_LOSS_WEIGHT=4 \
-bash scripts/rerun_cc7.sh --background
-```
-
-CIFAR10:
-
-```bash
-DATASET_NAME=Cifar10 GLOBAL_ROUNDS=300 TIMES=10 \
-OVERSAMPLE_LABEL_FACTOR=4 LABEL_LOSS_WEIGHT=4 \
-bash scripts/rerun_cc7.sh --background
-```
-
-`rerun_cc7.sh` atualiza CSVs de `cc=7`, mas nao recompila todos os PNGs automaticamente. Para graficos atualizados, rode `plot_cc_attack_types.py` no dataset certo.
-
-### Verificar Completude
-
-```bash
-python3 - <<'PY'
-import csv, glob, collections
-
-paths = glob.glob("artifacts/runs/*/*/analysis/fpr_frr_results_7.csv")
-paths += glob.glob("PFLlibMonza/system/fpr_frr_results_7.csv")
-for path in paths:
-    rows = list(csv.DictReader(open(path)))
-    by_run = collections.defaultdict(list)
-    for row in rows:
-        by_run[row["RunID"]].append(int(row["Round"]))
-    print(path)
-    for run_id, rounds in by_run.items():
-        print(" ", run_id, min(rounds), max(rounds), len(rounds))
-PY
-```
-
-Um run oficial deve chegar ao round `300` em cada seed. Se parar antes, trate como parcial.
-
-## Variaveis Principais
-
-| Variavel | Default | Efeito |
-|---|---:|---|
-| `GLOBAL_ROUNDS` | `50` nos scripts, `300` recomendado | Rounds do experimento final. |
-| `TIMES` | `1` nos scripts, `10` recomendado | Numero de seeds/runs. |
-| `SKIP_BERT` | `0` | `1` pula DistilBERT e `cc=6`. |
-| `ROUND_INIT_ATK` | `5` | Rounds iniciais sem ataque. |
-| `DUMP_START_ROUND` | `ROUND_INIT_ATK + 1` | Primeiro round salvo no dataset dos detectores. |
-| `DUMP_GLOBAL_ROUNDS` | `60` | Rounds usados so para gerar dump de treino. |
-| `KEEP_DUMP` | `0` | `1` preserva `state_dicts_monza_*` apos treinar. |
-| `MLP_THRESHOLD_KEY` | `combined_label_fpr05` | Threshold do `report.json` usado pelo `cc=7`. |
-| `MLP_THRESHOLD_VALUE` | vazio | Threshold binario manual para `cc=7`; sobrescreve `MLP_THRESHOLD_KEY`. |
-| `PUBLIC_VAL_DIR` | dataset `public_val/` | Holdout limpo usado nas features contextuais. |
-| `ARTIFACTS_ROOT` | `artifacts/` | Raiz local de runs, modelos e dumps. |
-| `RUN_ID` | timestamp | Identificador usado no diretorio do run. |
-
-## Pipeline Manual
-
-Prefira `run_full_*`. O fluxo manual abaixo serve para debug.
-
-### 1. Dump De Updates
+### Criar dumps para treinamento
 
 ```bash
 cd PFLlibMonza/system
-../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-  -cc 5 -gr 60 -t 1 -ls 1 -did 0 -rfake 1 -ria 5 \
-  --dump_state_dicts ../../artifacts/dumps/mnist/manual \
+../../.venv/bin/python main.py \
+  -m CNN -data Cifar10 -nmc 30 -nc 100 -jr 1 \
+  -atk all -ria 5 -cc 5 -gr 60 -t 1 -ls 1 -did 0 -rfake 1 \
+  --dump_state_dicts ../../artifacts/dumps/cifar10/manual \
   --dump_start_round 6
 cd ../..
+
+find artifacts/dumps/cifar10/manual -name '*.json' | wc -l
+du -sh artifacts/dumps/cifar10/manual
 ```
 
-Aceite:
+### Treinar o MLP
 
 ```bash
-find artifacts/dumps/mnist/manual -name '*.json' | wc -l
-du -sh artifacts/dumps/mnist/manual
-```
-
-### 2. Treinar MLP
-
-```bash
-STATE_DICTS_DIR=./artifacts/dumps/mnist/manual \
-PUBLIC_VAL_DIR=./PFLlibMonza/dataset/MNIST/public_val \
-DATASET_NAME=MNIST \
-ARTIFACTS_DIR=./artifacts/models/mnist/mlp \
+STATE_DICTS_DIR=./artifacts/dumps/cifar10/manual \
+PUBLIC_VAL_DIR=./PFLlibMonza/dataset/Cifar10/public_val \
+DATASET_NAME=Cifar10 \
+ARTIFACTS_DIR=./artifacts/models/cifar10/mlp \
 .venv/bin/python -u src/detector_mlp.py
 ```
 
-Artefatos esperados: `model.pt`, `scaler.pkl`, `feature_names.json`, `report.json`, `score_diagnostics.csv`.
+Artefatos esperados:
 
-### 3. Rodar Defesa `cc=7`
+```bash
+ls artifacts/models/cifar10/mlp/{model.pt,scaler.pkl,feature_names.json,report.json,score_diagnostics.csv}
+```
+
+### Rodar a defesa cc=7
 
 ```bash
 cd PFLlibMonza/system
-PUBLIC_VAL_DIR=../dataset/MNIST/public_val DATASET_NAME=MNIST \
-../../.venv/bin/python main.py -m CNN -data MNIST -nmc 30 -nc 100 -jr 1 -atk all \
-  -cc 7 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 -ria 5 \
-  --detector_dir ../../artifacts/models/mnist/mlp \
+PUBLIC_VAL_DIR=../dataset/Cifar10/public_val DATASET_NAME=Cifar10 \
+../../.venv/bin/python main.py \
+  -m CNN -data Cifar10 -nmc 30 -nc 100 -jr 1 \
+  -atk all -ria 5 -cc 7 -gr 50 -t 1 -ls 1 -did 0 -rfake 1 \
+  --detector_dir ../../artifacts/models/cifar10/mlp \
   --mlp_threshold_key combined_label_fpr05
 cd ../..
 ```
 
-Saidas principais:
-
-- `PFLlibMonza/system/fpr_frr_results_7.csv`
-- `PFLlibMonza/system/cc_detail_results_7.csv`
-- `PFLlibMonza/system/cc_type_results_7.csv`
-
-## Analise
-
-### Summaries CLI
+Saidas esperadas:
 
 ```bash
-.venv/bin/python scripts/plot_cc_attack_types.py \
-  --system-dir PFLlibMonza/system \
-  --out-dir artifacts/runs/mnist/manual/analysis \
-  --dataset MNIST \
-  --tail-rounds 30
+ls PFLlibMonza/system/{fpr_frr_results_7.csv,cc_detail_results_7.csv,cc_type_results_7.csv}
 ```
 
-Para CIFAR10:
+### Gerar analises
 
 ```bash
 .venv/bin/python scripts/plot_cc_attack_types.py \
@@ -238,161 +162,63 @@ Para CIFAR10:
   --out-dir artifacts/runs/cifar10/manual/analysis \
   --dataset Cifar10 \
   --tail-rounds 30
+
+REPO_ROOT="$PWD" \
+DATASET_NAME=Cifar10 \
+ANALYSIS_OUT="$PWD/artifacts/runs/cifar10/manual/analysis" \
+.venv/bin/jupyter nbconvert --to notebook --execute \
+  notebooks/notebook_monza_analysis.ipynb \
+  --output notebook-monza-analysis.executed.ipynb \
+  --output-dir artifacts/runs/cifar10/manual
 ```
 
-### Media De FPR/FRR
+## 7. Variaveis principais
+
+| Variavel | Default | Efeito |
+|---|---:|---|
+| `GLOBAL_ROUNDS` | `50` | Rounds de cada experimento de avaliacao. |
+| `TIMES` | `1` | Quantidade de execucoes/seeds. |
+| `NUM_CLIENTS` | `100` | Clientes no particionamento e na simulacao. |
+| `NUM_MALICIOUS` | `30` | Clientes pertencentes ao grupo malicioso. |
+| `ROUND_INIT_ATK` | `5` | Ultimo round de warm-up sem ataques. |
+| `DUMP_GLOBAL_ROUNDS` | `60` | Rounds usados para criar o dataset do detector. |
+| `DUMP_START_ROUND` | `ROUND_INIT_ATK + 1` | Primeiro round salvo no dump. |
+| `KEEP_DUMP` | `0` | Use `1` para preservar os dumps apos o treino. |
+| `MLP_THRESHOLD_KEY` | `combined_label_fpr05` | Regra calibrada carregada do `report.json`. |
+| `MLP_THRESHOLD_VALUE` | vazio | Sobrescreve manualmente o threshold binario. |
+| `ARTIFACTS_ROOT` | `artifacts/` | Raiz de modelos, dumps, logs e analises. |
+
+## 8. Verificar resultados
 
 ```bash
 python3 - <<'PY'
-import glob
-import sys
-sys.path.insert(0, "scripts")
-from _fpr_frr_io import load_fpr_frr, summarize_fpr_frr
+import csv
+from pathlib import Path
 
-for path in sorted(glob.glob("PFLlibMonza/system/fpr_frr_results_*.csv")):
-    summary = summarize_fpr_frr(load_fpr_frr(path), min_round=5)
-    print(path)
-    print("  DetectionFPR={:.4f} DetectionFRR={:.4f}".format(
-        summary["DetectionFPR_mean"], summary["DetectionFRR_mean"]))
-    print("  QuarantineFPR={:.4f} QuarantineFRR={:.4f}".format(
-        summary["QuarantineFPR_mean"], summary["QuarantineFRR_mean"]))
+path = Path('PFLlibMonza/system/fpr_frr_results_7.csv')
+rows = list(csv.DictReader(path.open()))
+run_id = rows[-1]['RunID']
+rounds = [int(row['Round']) for row in rows if row['RunID'] == run_id]
+print('run:', run_id, 'rounds:', len(set(rounds)), 'ultimo:', max(rounds))
 PY
 ```
 
-`DetectionFPR/FRR` e a metrica comparavel ao paper. `QuarantineFPR/FRR` e diagnostico de ocupacao da quarentena.
+No experimento oficial, o ultimo round deve ser `300`. `DetectionFPR/FRR` e a metrica por decisao; `QuarantineFPR/FRR` e apenas diagnostico acumulado.
 
-### Sweep De Thresholds
-
-Requer detectores treinados:
-
-```bash
-./scripts/sweep_monza_thresholds.sh --background
-```
-
-Saidas:
-
-- `artifacts/runs/<dataset>/<run-id>_threshold_sweep/analysis/threshold_sweep_summary.csv`
-- plots de recall, FPR, acuracia e trade-off no mesmo diretorio.
-
-O sweep atual altera o threshold binario (`MLP_THRESHOLD_VALUE`/`BERT_THRESHOLD_VALUE`). Ele nao varre `label_threshold` separado da label head.
-
-## Estrutura Relevante
+## 9. Organizacao dos scripts
 
 ```text
-.
+scripts/
 ├── README.md
-├── docs/
-│   ├── guides/
-│   ├── results/
-│   ├── history/
-│   └── limitations/
-├── notebooks/
-├── src/
-│   ├── detector.py
-│   ├── detector_mlp.py
-│   ├── features.py
-│   ├── context_features.py
-│   ├── cc.py
-│   ├── cc_mlp.py
-│   └── fl_save.py
-├── scripts/
-│   ├── README.md
-│   ├── run_full_monza.sh
-│   ├── run_full_cifar10.sh
-│   ├── rerun_cc7.sh
-│   ├── sweep_monza_thresholds.sh
-│   ├── create_label_flip_train_mal.py
-│   ├── plot_cc_attack_types.py
-│   ├── summarize_threshold_sweep.py
-│   ├── _fpr_frr_io.py
-│   ├── workflows/
-│   ├── tools/
-│   └── legacy/
-├── artifacts/                 # local, ignorado pelo Git
-└── PFLlibMonza/
-    ├── dataset/
-    └── system/
-        ├── main.py
-        └── flcore/detector/
+├── check_project.sh
+├── run_full.sh
+├── rerun_cc7.sh
+├── create_label_flip_train_mal.py
+├── plot_cc_attack_types.py
+├── _check_markdown_links.py
+├── _check_runtime_sync.py
+├── _fpr_frr_io.py
+└── _monza_common.sh
 ```
 
-`src/` e `PFLlibMonza/system/flcore/detector/` sao copias manuais. Se
-mexer em um detector usado pelo MONZA, atualize os dois lados e valide:
-
-```bash
-python3 scripts/check_runtime_sync.py
-```
-
-## Troubleshooting
-
-### `.venv/bin/python` nao existe
-
-Crie a venv da raiz:
-
-```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python \
-  --index-strategy unsafe-best-match \
-  -r requirements.txt
-```
-
-### Usar um caminho de log personalizado
-
-Os scripts criam o diretorio automaticamente. Para sobrescrever o caminho:
-
-```bash
-RUN_LOG=logs/manual.log bash scripts/run_full_monza.sh
-```
-
-### Dataset com numero errado de clientes
-
-Regere com flags explicitas:
-
-```bash
-cd PFLlibMonza/dataset
-../../.venv/bin/python generate_MNIST.py noniid - dir \
-  --num-clients 100 \
-  --dirichlet-alpha 0.2
-cd ../..
-```
-
-Depois recrie `train_mal/`.
-
-### Run parou no meio
-
-```bash
-ps -eo pid,etime,cmd | grep -E 'run_full|rerun_cc7|main.py|detector_mlp' | grep -v grep
-find artifacts/runs -name run.log -print
-df -h . PFLlibMonza/results /tmp
-```
-
-Se um `RunID` parar antes do round esperado, reexecute o comando inteiro. `-prev` em processo novo nao preserva estado de RNG entre seeds.
-
-### Grafico nao mudou depois de `rerun_cc7.sh`
-
-`rerun_cc7.sh` arquiva CSVs novos, mas nao recompila todos os PNGs. Reexecute `scripts/plot_cc_attack_types.py` para o dataset certo ou compare pelos CSVs.
-
-### `cc7` bom no geral mas ruim em `malicious_label`
-
-O recall geral pode ser dominado por `random`, `shuffle` e `zeros`. Confira `cc_detail_results_7.csv` filtrando `AttackType == malicious_label`.
-
-Reexecute `cc=7` com a head auxiliar ativada:
-
-```bash
-DATASET_NAME=Cifar10 GLOBAL_ROUNDS=300 TIMES=10 \
-OVERSAMPLE_LABEL_FACTOR=4 LABEL_LOSS_WEIGHT=4 \
-bash scripts/rerun_cc7.sh --background
-```
-
-### Disco insuficiente
-
-`-m VGG` em CIFAR10 pode gerar centenas de GB de dumps. Para debug, reduza `DUMP_GLOBAL_ROUNDS`, `GLOBAL_ROUNDS` ou `NUM_CLIENTS`.
-
-## Referencias
-
-- [`scripts/README.md`](../../scripts/README.md)
-- [`README.md`](../../README.md)
-- [`RESULTS.md`](../results/RESULTS.md)
-- [`MONZA_RESULTS.md`](../results/MONZA_RESULTS.md)
-- PFLlib upstream: https://github.com/TsingZ0/PFLlib
-- MONZA fork: https://github.com/VeigarGit/PFLlibMonza
+Consulte [scripts/README.md](../../scripts/README.md) para a responsabilidade de cada arquivo.

@@ -1,5 +1,7 @@
 # MONZA × jpt — Resultados experimentais
 
+> **Relatorio historico.** As comparacoes com `cc=6` registram o experimento encerrado com DistilBERT. O fluxo executavel atual usa o MLP em `cc=7`.
+
 Pipeline completo: **PFLlibMonza** (FL real) gera dataset → **detector DistilBERT/MLP** (jpt) treina → defesa volta como `cc=6/cc=7` no servidor MONZA, comparada com baselines `cc=2` (cluster) e `cc=3` (cosseno+score).
 
 > **Nota pós-resultado**: este relatório preserva os resultados fechados de 2026-04-28 para `cc=2/3/6/7`. O `cc=8` (MLP+validação pública para label flip), `cc=9` (DistilBERT+MLP+label-flip check) e `cc=10` (DistilBERT+MLP+TargetLF) foram adicionados depois e ainda precisam de novo run experimental para ter FPR/FRR reportados.

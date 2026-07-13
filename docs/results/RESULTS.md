@@ -1,6 +1,6 @@
 # Detector de updates maliciosos em FL
 
-> Este documento é o relatório do **bench original** (dataset sintético gerado pelo `notebooks/BertModelsclassify.ipynb`/`src/bench_grid.py`). Para resultados em **FL real** (PFLlibMonza, 100 clientes não-IID, 50 rounds com 4 defesas comparadas), ver [`MONZA_RESULTS.md`](MONZA_RESULTS.md).
+> **Documento historico.** Este relatorio descreve o bench sintetico DistilBERT versus MLP. O codigo e o notebook desse bench foram removidos do fluxo ativo e permanecem recuperaveis pelo historico Git. Para o pipeline atual em FL real, consulte [`MONZA_RESULTS.md`](MONZA_RESULTS.md) e o [`HOWTO`](../guides/HOWTO.md).
 
 Estudo comparativo de duas abordagens para detectar **state_dicts maliciosos** enviados por clientes em Federated Learning. Cliente FL é uma `FedAvgCNN` (~580k pesos); detector classifica binariamente um update vindo de cliente como `benigno` ou `malicioso` antes da agregação.
 

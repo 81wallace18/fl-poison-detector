@@ -1,5 +1,7 @@
 # Evolução do projeto: lógica e metodologia
 
+> Documento historico. Caminhos e comandos de fases antigas podem nao existir mais na arvore ativa; o Git preserva suas implementacoes.
+
 Como saímos de **F1=0.43 com bugs** para **F1=0.99 num benchmark realista**. Cada fase identificou um problema distinto — alguns eram bugs, outros decisões metodológicas, outros descobertas que reescreveram a abordagem.
 
 ## Ponto de partida

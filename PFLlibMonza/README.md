@@ -1,15 +1,15 @@
 # <img src="docs/imgs/logo-green.png" alt="icon" height="24" style="vertical-align:sub;"/> PFLlib: Personalized Federated Learning Library and Benchmark
 
-> **Nota — fork integrado ao `fl-poison-detector`**: Este diretório é uma cópia do [PFLlibMonza](https://github.com/VeigarGit/PFLlibMonza) (que por sua vez é fork do [PFLlib upstream](https://github.com/TsingZ0/PFLlib)) com modificações pra defesa contra clientes maliciosos via detector DistilBERT/MLP. Para o pipeline completo (gerar dataset → treinar detector → defesa em produção como `cc=6`, `cc=7`, `cc=8`, `cc=9` ou `cc=10`), ver os docs no diretório pai:
+> **Nota — fork integrado ao `fl-poison-detector`**: Este diretório é uma cópia do [PFLlibMonza](https://github.com/VeigarGit/PFLlibMonza) (que por sua vez é fork do [PFLlib upstream](https://github.com/TsingZ0/PFLlib)) com modificações para a defesa MLP `cc=7`. Para o pipeline completo, consulte os documentos no diretório pai:
 > - [`../docs/guides/HOWTO.md`](../docs/guides/HOWTO.md) — passo-a-passo
 > - [`../docs/results/MONZA_RESULTS.md`](../docs/results/MONZA_RESULTS.md) — resultados experimentais
 > - [`../docs/history/EVOLUTION.md`](../docs/history/EVOLUTION.md) — narrativa metodológica
 >
 > Modificações neste fork:
-> - `system/main.py`: novos args `--dump_state_dicts`, `--detector_dir`, `--bert_detector_dir`, `--mlp_detector_dir` e checks de holdout
+> - `system/main.py`: argumentos de dump, detector MLP e checks de holdout
 > - `system/flcore/clients/clientmaliciousavg.py`: expõe `last_attack_type`
-> - `system/flcore/servers/serveravg.py`: defesas `cc==6` (DistilBERT), `cc==7` (MLP), `cc==8` (MLP+validação), `cc==9` (DistilBERT+MLP+label-flip check) e `cc==10` (DistilBERT+MLP+TargetLF)
-> - `system/flcore/detector/`: módulo novo (cópia gêmea de `cc/cc_mlp/fl_save/features` do parent + checks de validação/comportamento)
+> - `system/flcore/servers/serveravg.py`: defesa `cc==7` com MLP e métricas por tipo de ataque
+> - `system/flcore/detector/`: cópia runtime de `cc_mlp`, `fl_save`, `features` e `context_features`
 > - `system/utils/data_utils.py`: label flip real lê `dataset/<DATA>/train_mal/` e falha se esse diretório não existir
 
 ---

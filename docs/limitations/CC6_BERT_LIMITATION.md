@@ -1,5 +1,7 @@
 # cc6 (DistilBERT) — limitação confirmada: cego a `shuffle` (e label)
 
+> Registro historico do motivo pelo qual o BERT e o `cc=6` foram retirados do fluxo executavel.
+
 ## Resultado
 No cenário do paper (CNN, 100 clients, 30% mal, α=0.2, 300 rounds, 10 seeds), a defesa **cc6
 (detector NLP DistilBERT+LoRA) colapsa** o modelo global: acurácia final ~10% (random) tanto em
