@@ -7,7 +7,6 @@ import difflib
 from pathlib import Path
 
 MIRRORED_FILES = (
-    "cc.py",
     "cc_mlp.py",
     "context_features.py",
     "features.py",
@@ -63,4 +62,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

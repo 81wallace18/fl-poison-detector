@@ -9,7 +9,7 @@ monza_dataset_slug() {
 }
 
 monza_check_sync() {
-  python3 "$ROOT/scripts/check_runtime_sync.py"
+  python3 "$ROOT/scripts/_check_runtime_sync.py"
 }
 
 # monza_run <cc> <nmal> <rounds> <times> [main.py args...]
@@ -26,4 +26,3 @@ monza_run() {
       -rfake "$RATE_FAKE" "$@"
   )
 }
-

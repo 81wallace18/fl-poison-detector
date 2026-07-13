@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import os
 import shutil
 import subprocess
 import sys
@@ -10,9 +8,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SYNC_SCRIPT = ROOT / "scripts/check_runtime_sync.py"
-ARCHIVE_SCRIPT = ROOT / "scripts/tools/archive_results.py"
-MIRRORED_FILES = ("cc.py", "cc_mlp.py", "context_features.py", "features.py", "fl_save.py")
+SYNC_SCRIPT = ROOT / "scripts/_check_runtime_sync.py"
+MIRRORED_FILES = ("cc_mlp.py", "context_features.py", "features.py", "fl_save.py")
 
 
 class RuntimeSyncTest(unittest.TestCase):
@@ -40,37 +37,6 @@ class RuntimeSyncTest(unittest.TestCase):
             self.assertEqual(subprocess.run(command, check=False).returncode, 1)
 
 
-class ArchiveResultsTest(unittest.TestCase):
-    def test_archives_and_hardlinks_duplicate_files(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            temp_path = Path(temp)
-            (temp_path / "first").mkdir()
-            (temp_path / "second").mkdir()
-            (temp_path / "first/result.csv").write_text("same\n", encoding="utf-8")
-            (temp_path / "second/result.csv").write_text("same\n", encoding="utf-8")
-
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(ARCHIVE_SCRIPT),
-                    "--archive-dir",
-                    "archive",
-                    "first",
-                    "second",
-                ],
-                cwd=temp_path,
-                check=True,
-            )
-
-            first = temp_path / "archive/first/result.csv"
-            second = temp_path / "archive/second/result.csv"
-            self.assertEqual(os.stat(first).st_ino, os.stat(second).st_ino)
-            manifest = json.loads(
-                (temp_path / "archive/manifest.json").read_text(encoding="utf-8")
-            )
-            self.assertEqual(len(manifest["deduplicated"]), 1)
-
-
 class ScientificHelpersTest(unittest.TestCase):
     def test_label_flip_creates_expected_labels(self) -> None:
         try:
@@ -89,7 +55,7 @@ class ScientificHelpersTest(unittest.TestCase):
             subprocess.run(
                 [
                     sys.executable,
-                    str(ROOT / "scripts/tools/create_label_flip_train_mal.py"),
+                    str(ROOT / "scripts/create_label_flip_train_mal.py"),
                     "--dataset-dir",
                     str(dataset),
                 ],
@@ -107,7 +73,7 @@ class ScientificHelpersTest(unittest.TestCase):
 
         import importlib.util
 
-        path = ROOT / "scripts/tools/_fpr_frr_io.py"
+        path = ROOT / "scripts/_fpr_frr_io.py"
         spec = importlib.util.spec_from_file_location("fpr_io_test", path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
@@ -116,6 +82,53 @@ class ScientificHelpersTest(unittest.TestCase):
         normalized = module.normalize_columns(frame)
         self.assertIn("DetectionFPR", normalized.columns)
         self.assertIn("QuarantineFPR", normalized.columns)
+
+
+class WorkflowCliTest(unittest.TestCase):
+    def run_script(self, script: str, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(ROOT / "scripts" / script), *args],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
+    def test_dry_run_profiles(self) -> None:
+        for script in ("run_full.sh", "rerun_cc7.sh"):
+            for profile, dataset in (("mnist", "MNIST"), ("cifar10", "Cifar10")):
+                result = self.run_script(script, profile, "--dry-run")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"profile={profile}", result.stdout)
+                self.assertIn(f"dataset={dataset}", result.stdout)
+
+    def test_profile_is_required_and_validated(self) -> None:
+        for script in ("run_full.sh", "rerun_cc7.sh"):
+            missing = self.run_script(script)
+            self.assertEqual(missing.returncode, 2)
+            self.assertIn("Uso:", missing.stderr)
+            invalid = self.run_script(script, "unknown", "--dry-run")
+            self.assertEqual(invalid.returncode, 2)
+            self.assertIn("Perfil invalido", invalid.stderr)
+
+
+class NotebookHygieneTest(unittest.TestCase):
+    def test_only_active_notebook_is_clean(self) -> None:
+        import json
+
+        notebooks = sorted((ROOT / "notebooks").glob("*.ipynb"))
+        self.assertEqual([path.name for path in notebooks], ["notebook_monza_analysis.ipynb"])
+        notebook = json.loads(notebooks[0].read_text(encoding="utf-8"))
+        source = "".join(
+            "".join(cell.get("source", [])) for cell in notebook.get("cells", [])
+        )
+        self.assertNotIn("DistilBERT", source)
+        self.assertNotIn("cc=6", source)
+        self.assertNotIn("/home/", source)
+        for cell in notebook.get("cells", []):
+            if cell.get("cell_type") == "code":
+                self.assertIsNone(cell.get("execution_count"))
+                self.assertEqual(cell.get("outputs", []), [])
 
 
 if __name__ == "__main__":

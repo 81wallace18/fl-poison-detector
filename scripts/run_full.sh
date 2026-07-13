@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-# shellcheck source=../lib/monza_common.sh
-source "$ROOT/scripts/lib/monza_common.sh"
+ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=_monza_common.sh
+source "$ROOT/scripts/_monza_common.sh"
 
-PROFILE="${DATASET_PROFILE:-mnist}"
+usage() {
+  echo "Uso: bash scripts/run_full.sh <mnist|cifar10> [--dry-run|--background]" >&2
+}
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
+PROFILE="${1:-}"
+MODE="${2:-}"
+if [[ -z "$PROFILE" || $# -gt 2 ]]; then
+  usage
+  exit 2
+fi
 case "$PROFILE" in
   mnist)
     DEFAULT_DATASET=MNIST
@@ -16,7 +29,16 @@ case "$PROFILE" in
     GENERATOR=generate_Cifar10.py
     ;;
   *)
-    echo "DATASET_PROFILE invalido: $PROFILE (use mnist ou cifar10)" >&2
+    echo "Perfil invalido: $PROFILE" >&2
+    usage
+    exit 2
+    ;;
+esac
+case "$MODE" in
+  ""|--dry-run|--background) ;;
+  *)
+    echo "Opcao invalida: $MODE" >&2
+    usage
     exit 2
     ;;
 esac
@@ -42,30 +64,17 @@ DUMP_GLOBAL_ROUNDS="${DUMP_GLOBAL_ROUNDS:-60}"
 DUMP_TIMES="${DUMP_TIMES:-1}"
 DUMP_START_ROUND="${DUMP_START_ROUND:-$((ROUND_INIT_ATK + 1))}"
 KEEP_DUMP="${KEEP_DUMP:-0}"
-SKIP_BERT="${SKIP_BERT:-0}"
 
 ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-$ROOT/artifacts}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 DATASET_SLUG="$(monza_dataset_slug "$DATASET_NAME")"
 RUN_OUTPUT="${RUN_OUTPUT:-$ARTIFACTS_ROOT/runs/$DATASET_SLUG/$RUN_ID}"
 STATE_DICTS_DIR="${STATE_DICTS_DIR:-$ARTIFACTS_ROOT/dumps/$DATASET_SLUG/current}"
-BERT_DIR="${BERT_DIR:-$ARTIFACTS_ROOT/models/$DATASET_SLUG/bert}"
 MLP_DIR="${MLP_DIR:-$ARTIFACTS_ROOT/models/$DATASET_SLUG/mlp}"
-RUN_DIR="${RUN_DIR:-$ARTIFACTS_ROOT/models/$DATASET_SLUG/bert-runs}"
 ANALYSIS_OUT="${ANALYSIS_OUT:-$RUN_OUTPUT/analysis}"
 PUBLIC_VAL_DIR="${PUBLIC_VAL_DIR:-$DATASET_DIR/$DATASET_NAME/public_val}"
 RUN_LOG="${RUN_LOG:-$RUN_OUTPUT/run.log}"
 
-BERT_THRESHOLD_KEY="${BERT_THRESHOLD_KEY:-combined_label_fpr05}"
-BERT_THRESHOLD_VALUE="${BERT_THRESHOLD_VALUE:-}"
-BERT_EPOCHS="${BERT_EPOCHS:-8}"
-BERT_EARLY_STOPPING_PATIENCE="${BERT_EARLY_STOPPING_PATIENCE:-2}"
-BERT_OVERSAMPLE_LABEL_FACTOR="${BERT_OVERSAMPLE_LABEL_FACTOR:-4}"
-BERT_LABEL_LOSS_WEIGHT="${BERT_LABEL_LOSS_WEIGHT:-3.0}"
-BERT_MAX_BENIGN_FPR="${BERT_MAX_BENIGN_FPR:-0.05}"
-BERT_TRAIN_BATCH_SIZE="${BERT_TRAIN_BATCH_SIZE:-16}"
-BERT_EVAL_BATCH_SIZE="${BERT_EVAL_BATCH_SIZE:-16}"
-BERT_LEARNING_RATE="${BERT_LEARNING_RATE:-2e-4}"
 MLP_THRESHOLD_KEY="${MLP_THRESHOLD_KEY:-combined_label_fpr05}"
 MLP_THRESHOLD_VALUE="${MLP_THRESHOLD_VALUE:-}"
 
@@ -81,12 +90,10 @@ rounds=$GLOBAL_ROUNDS
 times=$TIMES
 run_output=$RUN_OUTPUT
 state_dicts=$STATE_DICTS_DIR
-bert_model=$BERT_DIR
 mlp_model=$MLP_DIR
 analysis=$ANALYSIS_OUT
 log=$RUN_LOG
-skip_bert=$SKIP_BERT
-stages=sync-check,clean,dataset,dump,train,baselines,cc3,detectors,analysis
+stages=sync-check,clean,dataset,dump,train-mlp,baselines,cc3,cc7,analysis
 EOF
 }
 
@@ -129,7 +136,7 @@ main() {
 
   mkdir -p "$RUN_OUTPUT"
   archive_system_csvs
-  rm -rf "$STATE_DICTS_DIR" "$BERT_DIR" "$MLP_DIR" "$RUN_DIR" "$ANALYSIS_OUT"
+  rm -rf "$STATE_DICTS_DIR" "$MLP_DIR" "$ANALYSIS_OUT"
   rm -f \
     "$SYSTEM_DIR"/f.csv \
     "$SYSTEM_DIR"/fpr_frr_results_*.csv \
@@ -151,7 +158,7 @@ PY
     "$VENV_PY" "$GENERATOR" noniid - dir \
       --num-clients "$NUM_CLIENTS" --dirichlet-alpha "$DIRICHLET_ALPHA"
   )
-  "$VENV_PY" "$ROOT/scripts/tools/create_label_flip_train_mal.py" \
+  "$VENV_PY" "$ROOT/scripts/create_label_flip_train_mal.py" \
     --dataset-dir "$DATASET_DIR/$DATASET_NAME" --num-classes 10
 
   monza_log "Dump MONZA state_dicts"
@@ -159,21 +166,6 @@ PY
     --dump_state_dicts "$STATE_DICTS_DIR" --dump_start_round "$DUMP_START_ROUND"
   find "$STATE_DICTS_DIR" -name '*.json' | wc -l
   du -sh "$STATE_DICTS_DIR"
-
-  if [[ "$SKIP_BERT" != "1" ]]; then
-    monza_log "Train DistilBERT detector"
-    STATE_DICTS_DIR="$STATE_DICTS_DIR" PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
-    OVERSAMPLE_LABEL_FACTOR="$BERT_OVERSAMPLE_LABEL_FACTOR" \
-    LABEL_LOSS_WEIGHT="$BERT_LABEL_LOSS_WEIGHT" BERT_EPOCHS="$BERT_EPOCHS" \
-    BERT_EARLY_STOPPING_PATIENCE="$BERT_EARLY_STOPPING_PATIENCE" \
-    BERT_MAX_BENIGN_FPR="$BERT_MAX_BENIGN_FPR" \
-    BERT_TRAIN_BATCH_SIZE="$BERT_TRAIN_BATCH_SIZE" \
-    BERT_EVAL_BATCH_SIZE="$BERT_EVAL_BATCH_SIZE" \
-    BERT_LEARNING_RATE="$BERT_LEARNING_RATE" FINAL_MODEL_DIR="$BERT_DIR" \
-    RUN_DIR="$RUN_DIR" "$VENV_PY" -u src/detector.py
-  else
-    monza_log "SKIP_BERT=1: pulando treino do DistilBERT (cc6)"
-  fi
 
   monza_log "Train MLP detector"
   STATE_DICTS_DIR="$STATE_DICTS_DIR" PUBLIC_VAL_DIR="$PUBLIC_VAL_DIR" \
@@ -188,26 +180,19 @@ PY
   monza_run 5 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"
   monza_run 3 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"
 
-  local bert_args=(--detector_dir "$BERT_DIR" --bert_threshold_key "$BERT_THRESHOLD_KEY")
   local mlp_args=(--detector_dir "$MLP_DIR" --mlp_threshold_key "$MLP_THRESHOLD_KEY")
-  [[ -z "$BERT_THRESHOLD_VALUE" ]] || bert_args+=(--bert_threshold_value "$BERT_THRESHOLD_VALUE")
   [[ -z "$MLP_THRESHOLD_VALUE" ]] || mlp_args+=(--mlp_threshold_value "$MLP_THRESHOLD_VALUE")
-  if [[ "$SKIP_BERT" != "1" ]]; then
-    monza_run 6 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${bert_args[@]}"
-  fi
   monza_run 7 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${mlp_args[@]}"
 
-  if [[ "$PROFILE" == "mnist" ]]; then
-    monza_log "Execute notebook plots"
-    REPO_ROOT="$ROOT" ANALYSIS_OUT="$ANALYSIS_OUT" \
-      "$JUPYTER" nbconvert --to notebook --execute \
-      notebooks/notebook_monza_analysis.ipynb \
-      --output notebook-monza-analysis.executed.ipynb --output-dir "$RUN_OUTPUT" \
-      || monza_log "WARN: nbconvert falhou; seguindo para os summaries CLI"
-  fi
+  monza_log "Execute notebook plots"
+  REPO_ROOT="$ROOT" ANALYSIS_OUT="$ANALYSIS_OUT" DATASET_NAME="$DATASET_NAME" \
+    "$JUPYTER" nbconvert --to notebook --execute \
+    notebooks/notebook_monza_analysis.ipynb \
+    --output notebook-monza-analysis.executed.ipynb --output-dir "$RUN_OUTPUT" \
+    || monza_log "WARN: nbconvert falhou; seguindo para os summaries CLI"
 
   monza_log "Write CLI summaries"
-  "$VENV_PY" "$ROOT/scripts/tools/plot_cc_attack_types.py" \
+  "$VENV_PY" "$ROOT/scripts/plot_cc_attack_types.py" \
     --system-dir "$SYSTEM_DIR" --out-dir "$ANALYSIS_OUT" \
     --dataset "$DATASET_NAME" --tail-rounds 30
   cp "$SYSTEM_DIR"/fpr_frr_results_*.csv "$ANALYSIS_OUT"/ 2>/dev/null || true
@@ -216,18 +201,14 @@ PY
   monza_log "DONE $DATASET_NAME"
 }
 
-if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
-  return 0
-fi
-
 validate_profile
-if [[ "${1:-}" == "--dry-run" ]]; then
+if [[ "$MODE" == "--dry-run" ]]; then
   monza_check_sync
   print_config
-elif [[ "${1:-}" == "--background" ]]; then
+elif [[ "$MODE" == "--background" ]]; then
   mkdir -p "$(dirname "$RUN_LOG")"
-  nohup env ROOT="$ROOT" DATASET_PROFILE="$PROFILE" RUN_ID="$RUN_ID" \
-    RUN_OUTPUT="$RUN_OUTPUT" RUN_LOG="$RUN_LOG" "$0" >"$RUN_LOG" 2>&1 &
+  nohup env ROOT="$ROOT" RUN_ID="$RUN_ID" RUN_OUTPUT="$RUN_OUTPUT" RUN_LOG="$RUN_LOG" \
+    "$0" "$PROFILE" >"$RUN_LOG" 2>&1 &
   printf 'Started PID %s\nLog: %s\n' "$!" "$RUN_LOG"
 else
   mkdir -p "$(dirname "$RUN_LOG")"
