@@ -7,12 +7,12 @@ Variantes (USE_PRETRAINED_BASE x HARDEN_ATTACKS):
   4_pretrained_easy   : MNIST-trained base + ataques originais
 
 Para cada variante:
-  - Gera state_dicts em state_dicts_grid/{variante}/
+  - Gera state_dicts em artifacts/dumps/synthetic/{variante}/
   - Treina e avalia detector.py (DistilBERT+LoRA)
   - Treina e avalia detector_mlp.py (MLP+features)
 
 Tempo total estimado: ~30-40 min na RTX 5060 Ti.
-Saida: tabela final em stdout + bench_grid_results.json.
+Saida: tabela final em stdout + artifacts/runs/synthetic/bench_grid_results.json.
 """
 from __future__ import annotations
 
@@ -123,11 +123,12 @@ def train_pretrained_base(epochs=10, batch_size=128, lr=0.01, device=None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     transform = transforms.Compose([transforms.ToTensor()])
+    mnist_root = os.environ.get('MNIST_DATA_DIR', 'artifacts/cache/mnist')
     train_ds = torchvision.datasets.MNIST(
-        root='./mnist_data', train=True, download=True, transform=transform
+        root=mnist_root, train=True, download=True, transform=transform
     )
     test_ds = torchvision.datasets.MNIST(
-        root='./mnist_data', train=False, download=True, transform=transform
+        root=mnist_root, train=False, download=True, transform=transform
     )
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2)
     test_loader = DataLoader(test_ds, batch_size=512, shuffle=False, num_workers=2)
@@ -291,10 +292,11 @@ def run_detector(name: str, script: str, ds_dir: Path, output_dir: Path,
 # ============== Orquestrador ==============
 
 def main():
-    grid_root = Path('state_dicts_grid')
-    output_root = Path('detector_grid_runs')
-    grid_root.mkdir(exist_ok=True)
-    output_root.mkdir(exist_ok=True)
+    artifacts_root = Path(os.environ.get('BENCH_ARTIFACTS_ROOT', 'artifacts'))
+    grid_root = artifacts_root / 'dumps/synthetic'
+    output_root = artifacts_root / 'models/synthetic'
+    grid_root.mkdir(parents=True, exist_ok=True)
+    output_root.mkdir(parents=True, exist_ok=True)
 
     # Args opcionais via env
     n_samples = int(os.environ.get('GRID_N_SAMPLES_PER_CLASS', '1000'))
@@ -378,9 +380,14 @@ def main():
         )
 
     # Salva tudo
-    with open('bench_grid_results.json', 'w') as f:
+    results_file = Path(os.environ.get(
+        'BENCH_RESULTS_FILE',
+        'artifacts/runs/synthetic/bench_grid_results.json',
+    ))
+    results_file.parent.mkdir(parents=True, exist_ok=True)
+    with results_file.open('w') as f:
         json.dump(results, f, indent=2)
-    print('\nResultados salvos em bench_grid_results.json')
+    print(f'\nResultados salvos em {results_file}')
 
 
 if __name__ == '__main__':
