@@ -63,6 +63,25 @@ O workflow executa, nesta ordem:
 
 Para MNIST, use o mesmo comando com o perfil `mnist`.
 
+### Rodar MNIST e CIFAR-10 sequencialmente
+
+Os dois perfis devem rodar em sequencia, pois usam os mesmos CSVs temporarios em `PFLlibMonza/system`. O comando abaixo executa primeiro o MNIST completo e, somente se ele terminar sem erro, inicia o CIFAR-10:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+
+tmux new-session -d -s fl-poison-all \
+  'GLOBAL_ROUNDS=300 TIMES=10 bash scripts/run_full.sh mnist && GLOBAL_ROUNDS=300 TIMES=10 bash scripts/run_full.sh cifar10'
+```
+
+Acompanhe a fila com:
+
+```bash
+tmux attach -t fl-poison-all
+```
+
+Para sair sem interromper a execucao, pressione `Ctrl+B` e depois `D`. Cada perfil gera seu proprio notebook, CSVs e graficos em `artifacts/runs/cifar10/<run-id>/analysis/` e `artifacts/runs/mnist/<run-id>/analysis/`. Os graficos comparam `cc=3`, `cc=5` e `cc=7` dentro de cada dataset; nao ha um grafico unico comparando CIFAR-10 com MNIST.
+
 Escolha apenas uma forma para cada experimento: o `run_full.sh` completo ou os comandos manuais da secao 6. Nao e necessario executar os dois.
 
 ## 4. Validacao rapida
