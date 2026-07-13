@@ -38,7 +38,6 @@ O dry-run confere a sincronizacao do runtime e imprime todos os caminhos sem ger
 
 Use `run_full.sh` quando nao quiser ou nao puder executar o pipeline manualmente. Ele executa todas as etapas da secao manual, na ordem correta, e tambem gera o notebook, os CSVs e os graficos comparativos.
 
-Feito sob medida pra você meu doutor lindo Rafael Veiga ❤️ ❤️ ❤️ .
 
 ```bash
 GLOBAL_ROUNDS=300 TIMES=10 \
@@ -64,6 +63,8 @@ O workflow executa, nesta ordem:
 Para MNIST, use o mesmo comando com o perfil `mnist`.
 
 ### Rodar MNIST e CIFAR-10 sequencialmente
+
+Feito sob medida pra você meu doutor lindo Rafael Veiga ❤️ ❤️ ❤️ .
 
 Os dois perfis devem rodar em sequencia, pois usam os mesmos CSVs temporarios em `PFLlibMonza/system`. O comando abaixo executa primeiro o MNIST completo e, somente se ele terminar sem erro, inicia o CIFAR-10:
 
