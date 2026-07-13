@@ -34,7 +34,9 @@ bash scripts/rerun_cc7.sh cifar10 --dry-run
 
 O dry-run confere a sincronizacao do runtime e imprime todos os caminhos sem gerar dataset ou modelo.
 
-## 3. Executar CIFAR-10 completo
+## 3. Opcao automatica recomendada: run_full.sh
+
+Use `run_full.sh` quando nao quiser ou nao puder executar o pipeline manualmente. Ele executa todas as etapas da secao manual, na ordem correta, e tambem gera o notebook, os CSVs e os graficos comparativos.
 
 ```bash
 GLOBAL_ROUNDS=300 TIMES=10 \
@@ -59,6 +61,8 @@ O workflow executa, nesta ordem:
 
 Para MNIST, use o mesmo comando com o perfil `mnist`.
 
+Escolha apenas uma forma para cada experimento: o `run_full.sh` completo ou os comandos manuais da secao 6. Nao e necessario executar os dois.
+
 ## 4. Validacao rapida
 
 Este comando percorre o pipeline completo com escala reduzida. Ele valida integracao e formatos, mas nao produz metricas cientificas comparaveis ao experimento oficial.
@@ -81,9 +85,19 @@ GLOBAL_ROUNDS=300 TIMES=10 \
 bash scripts/rerun_cc7.sh cifar10 --background
 ```
 
-## 6. Pipeline manual CIFAR-10
+## 6. Alternativa manual CIFAR-10
 
-Use estes comandos para depurar uma etapa especifica. O workflow da secao anterior ja executa todos eles.
+Use estes comandos somente quando precisar depurar ou controlar uma etapa especifica. O workflow automatico ja executa todos eles.
+
+Se nao puder continuar manualmente, volte para a raiz do repositorio e execute o fluxo automatico:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+GLOBAL_ROUNDS=300 TIMES=10 \
+bash scripts/run_full.sh cifar10 --background
+```
+
+Esse comando substitui toda a sequencia manual abaixo.
 
 ### Gerar o dataset
 
