@@ -193,12 +193,18 @@ def _public_validation(public_val_dir: str) -> Tuple[torch.Tensor, torch.Tensor]
     return X, y
 
 
+_EVAL_CACHE: Dict[int, Dict[str, np.ndarray | float]] = {}
+
+
 @torch.no_grad()
 def _eval_state_dict(
     state_dict: Mapping[str, torch.Tensor],
     public_val_dir: str,
     device: torch.device,
 ) -> Dict[str, np.ndarray | float]:
+    sd_id = id(state_dict)
+    if sd_id in _EVAL_CACHE:
+        return _EVAL_CACHE[sd_id]
     X, y = _public_validation(public_val_dir)
     canonical_state = _canonical_model_state(state_dict)
     in_features, dim, num_classes = _model_shape_from_state(canonical_state)
@@ -264,7 +270,7 @@ def _eval_state_dict(
             reverse_margin_by_pair[idx] = float(reverse_margin[mask].mean().item())
             reverse_prob_delta_by_pair[idx] = float(reverse_prob_delta[mask].mean().item())
             reverse_pred_by_pair[idx] = float(reverse_pred[mask].mean().item())
-    return {
+    res = {
         'acc': float(ok.mean().item()),
         'loss': float(loss.mean().item()),
         'acc_by_class': acc_by_class,
@@ -275,6 +281,10 @@ def _eval_state_dict(
         'mean_probs_by_class': mean_probs_by_class,
         'flip_target_mass_by_class': flip_target_mass_by_class,
     }
+    if len(_EVAL_CACHE) > 200:
+        _EVAL_CACHE.clear()
+    _EVAL_CACHE[sd_id] = res
+    return res
 
 
 def feature_names() -> List[str]:

@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 import copy
 import sys
+from scipy.stats import norm
 
 def model_zeros(model, device = 'cpu'):
     # Cria uma cópia profunda do modelo para que o modelo original não seja alterado
@@ -80,7 +81,86 @@ def model_noise(model, SNR, client):
 
     return copy_model
 
+
+def model_alie(benign_models, n_clients, n_malicious):
+    """
+    Computes ALIE (A Little Is Enough) attack perturbation update based on benign models.
+    Ref: Baruch et al., NeurIPS 2019.
+    
+    u_mal = mean(benign) - z_max * std(benign)
+    where z_max = norm.ppf((n_clients - n_malicious - s) / (n_clients - n_malicious))
+    and s = floor(n_clients / 2) - n_malicious.
+    """
+    if not benign_models:
+        raise ValueError("model_alie requer pelo menos um modelo benigno.")
+
+    s = int(np.floor(n_clients / 2.0)) - n_malicious
+    if s < 1:
+        s = 1
+    
+    n_benign = len(benign_models)
+    p = (n_clients - n_malicious - s) / float(n_clients - n_malicious)
+    # Clamp p into valid open interval (0, 1) for norm.ppf
+    p = max(0.5, min(0.9999, p))
+    z_max = norm.ppf(p)
+
+    template_model = copy.deepcopy(benign_models[0])
+    
+    with torch.no_grad():
+        for name, param in template_model.named_parameters():
+            if not param.requires_grad and param.dtype not in (torch.float32, torch.float64):
+                continue
+            
+            # Extract corresponding parameter from all benign models
+            param_stack = torch.stack([m.state_dict()[name].float() for m in benign_models], dim=0)
+            
+            mean = torch.mean(param_stack, dim=0)
+            std = torch.std(param_stack, dim=0, unbiased=False)
+            
+            mal_param = mean - z_max * std
+            param.data.copy_(mal_param.to(param.dtype))
+            
+    return template_model
+
+
+def verify_alie_attack(benign_models, malicious_model, n_clients, n_malicious, rtol=1e-3, atol=1e-3):
+    """
+    Verifies that the malicious model parameters strictly adhere to the ALIE perturbation formula.
+    Returns (is_valid, stats_dict).
+    """
+    expected_alie = model_alie(benign_models, n_clients, n_malicious)
+    
+    max_diff = 0.0
+    nan_count = 0
+    total_params = 0
+    
+    with torch.no_grad():
+        for name, param in malicious_model.named_parameters():
+            if name not in expected_alie.state_dict():
+                continue
+            exp_p = expected_alie.state_dict()[name]
+            mal_p = param.data
+            
+            if torch.isnan(mal_p).any() or torch.isinf(mal_p).any():
+                nan_count += 1
+                
+            diff = torch.max(torch.abs(mal_p - exp_p)).item()
+            if diff > max_diff:
+                max_diff = diff
+            total_params += param.numel()
+
+    is_valid = (max_diff <= atol) and (nan_count == 0)
+    stats = {
+        'max_diff': max_diff,
+        'nan_count': nan_count,
+        'total_params': total_params,
+        'is_valid': is_valid,
+    }
+    return is_valid, stats
+
+
 #if __name__ == "__main__":
+
     #model = nn.Linear(3, 2)
 
     

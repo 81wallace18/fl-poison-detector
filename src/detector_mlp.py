@@ -53,7 +53,7 @@ except ImportError:
 SEED = 42
 STATE_DICTS_DIR = os.environ.get('STATE_DICTS_DIR', 'state_dicts')
 ARTIFACTS_DIR = Path(os.environ.get('ARTIFACTS_DIR', 'detector_mlp_artifacts'))
-OVERSAMPLE_LABEL_FACTOR = max(1, int(os.environ.get('OVERSAMPLE_LABEL_FACTOR', '1')))
+OVERSAMPLE_LABEL_FACTOR = max(1, int(os.environ.get('OVERSAMPLE_LABEL_FACTOR', '6')))
 LABEL_LOSS_WEIGHT = float(os.environ.get('LABEL_LOSS_WEIGHT', '1.0'))
 HIDDEN = (128, 64)
 DROPOUT = 0.3
@@ -77,6 +77,29 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+class SigmoidFocalLoss(nn.Module):
+    """Binary focal loss for hard-to-classify examples (label-flip head).
+
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    With gamma=2.0, easy examples (p_t > 0.8) get ~25x less loss weight
+    than hard examples (p_t ~ 0.5), forcing the trunk to learn features
+    that discriminate subtle label-flip updates from benign Non-IID.
+    """
+
+    def __init__(self, gamma: float = 2.0, alpha: float = 0.75):
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        p = torch.sigmoid(logits)
+        ce = nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+        p_t = p * targets + (1 - p) * (1 - targets)
+        alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+        focal_weight = alpha_t * (1 - p_t) ** self.gamma
+        return (focal_weight * ce).mean()
 
 
 class MLPDetector(nn.Module):
@@ -506,6 +529,7 @@ def main() -> None:
         TensorDataset(Xt_train, yt_train, yt_label_train),
         batch_size=BATCH_SIZE,
         shuffle=True,
+        drop_last=True,
         generator=torch.Generator().manual_seed(SEED),
     )
 
@@ -515,7 +539,7 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-5)
     criterion = nn.CrossEntropyLoss()
-    label_criterion = nn.BCEWithLogitsLoss()
+    label_criterion = SigmoidFocalLoss(gamma=2.0, alpha=0.75)
 
     Xt_dev_dev = Xt_dev.to(device)
     yt_dev_dev = yt_dev.to(device)
@@ -648,6 +672,20 @@ def main() -> None:
         combined_calib['label_threshold'],
     )
     by_type_combined = breakdown_by_type(np.asarray(combined['preds']), types_test)
+
+    combined_calib_01 = tune_combined_thresholds(
+        binary_scores_calib, label_scores_calib, y_calib, types_calib, max_benign_fpr=0.01
+    )
+    combined_01 = combined_metrics_from_thresholds(
+        binary_scores_test,
+        label_scores_test,
+        y_test,
+        types_test,
+        combined_calib_01['binary_threshold'],
+        combined_calib_01['label_threshold'],
+    )
+    by_type_combined_01 = breakdown_by_type(np.asarray(combined_01['preds']), types_test)
+
     for t in sorted(by_type):
         b = by_type[t]
         ratio = b['predicted_malicious'] / b['total']
@@ -760,6 +798,18 @@ def main() -> None:
             'malicious_label_recall': combined['malicious_label_recall'],
             'by_type': by_type_combined,
             'note': 'OR rule: binary_score > binary_threshold or label_score > label_threshold; calibrated with benign FPR <= 5%',
+        },
+        'combined_label_fpr01': {
+            'binary_threshold': combined_calib_01['binary_threshold'],
+            'label_threshold': combined_calib_01['label_threshold'],
+            'accuracy': combined_01['accuracy'],
+            'precision': combined_01['precision'],
+            'recall': combined_01['recall'],
+            'f1': combined_01['f1'],
+            'benign_fpr': combined_01['benign_fpr'],
+            'malicious_label_recall': combined_01['malicious_label_recall'],
+            'by_type': by_type_combined_01,
+            'note': 'OR rule: binary_score > binary_threshold or label_score > label_threshold; calibrated with benign FPR <= 1%',
         },
         'by_type': by_type,
         'split_protocol': 'disjoint_client_train_dev_calib_test',

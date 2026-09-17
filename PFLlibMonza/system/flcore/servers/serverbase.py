@@ -40,6 +40,7 @@ class Server(object):
         self.auto_break = args.auto_break
         self.cc = args.cluster_comparation
         self.rate_client_fake = args.rate_client_fake
+        self.round_init_atk = getattr(args, 'round_init_atk', 0)
 
 
         self.clients = []
@@ -411,7 +412,8 @@ class Server(object):
         return os.path.exists(model_path)
         
     def save_results(self):
-        algo = self.dataset + "_" + self.algorithm + "_" + str(self.cc) + "_" + str((self.rate_client_fake*100)) + "_" + str(self.n_client_malicious)
+        disable_str = "_noquarantine" if getattr(self, 'disable_quarantine', False) else ""
+        algo = self.dataset + "_" + self.algorithm + "_" + str(self.cc) + disable_str + "_" + str((self.rate_client_fake*100)) + "_" + str(self.n_client_malicious)
         result_path = "../results/"
         if not os.path.exists(result_path):
             os.makedirs(result_path)

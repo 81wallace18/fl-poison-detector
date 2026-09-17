@@ -12,21 +12,77 @@ import pandas as pd
 
 from _fpr_frr_io import load_fpr_frr as _load_fpr_frr_csv
 
-SELECTED_CCS = [3, 7]
-COMPARISON_CCS = [3, 5, 7]
-ATTACK_TYPES = ["malicious_label", "malicious_random", "malicious_shuffle", "malicious_zeros"]
+# Global matplotlib aesthetic defaults for large, high-visibility plots
+plt.rcParams.update({
+    'font.size': 16,
+    'axes.labelsize': 18,
+    'axes.titlesize': 20,
+    'xtick.labelsize': 16,
+    'ytick.labelsize': 16,
+    'legend.fontsize': 14,
+    'figure.titlesize': 22,
+})
+
+SELECTED_CCS = ["2", "2_noquarantine", "3", "3_noquarantine", "7", "7_noquarantine", "8", "8_noquarantine"]
+COMPARISON_CCS = [2, 3, 5, 7, 8]
+ATTACK_TYPES = [
+    # "malicious_alie",  # Commented out for unquarantined baseline testing
+    "malicious_label",
+    "malicious_random",
+    "malicious_shuffle",
+    "malicious_zeros",
+]
 DEFENSE_LABELS = {
-    3: "cc=3 (cosseno+score)",
-    5: "cc=5 (sem defesa)",
-    7: "cc=7 (MLP+features)",
+    "2": "CC2 (zPROBE + Quar)",
+    "2_noquarantine": "CC2 (zPROBE - NoQuar)",
+    "3": "CC3 (MONZA + Quar)",
+    "3_noquarantine": "CC3 (MONZA - NoQuar)",
+    "5": "CC5 (No Defense)",
+    "7": "CC7 (MLP + Quar)",
+    "7_noquarantine": "CC7 (MLP - NoQuar)",
+    "8": "CC8 (FedSIGN + Quar)",
+    "8_noquarantine": "CC8 (FedSIGN - NoQuar)",
+    2: "CC2 (zPROBE + Quar)",
+    3: "CC3 (MONZA + Quar)",
+    5: "CC5 (No Defense)",
+    7: "CC7 (MLP + Quar)",
+    8: "CC8 (FedSIGN + Quar)",
 }
+
 COLORS = {
-    "cc=3 (cosseno+score)": "#ff7f0e",
-    "cc=5 (sem defesa)": "#7f7f7f",
-    "cc=7 (MLP+features)": "#d62728",
+    "CC2 (zPROBE + Quar)": "#1f77b4",        # Blue
+    "CC2 (zPROBE - NoQuar)": "#aec7e8",      # Light Blue
+    "CC3 (MONZA + Quar)": "#ff7f0e",         # Solid Orange
+    "CC3 (MONZA - NoQuar)": "#e6550d",       # Dark Orange
+    "CC5 (No Defense)": "#7f7f7f",           # Gray
+    "CC7 (MLP + Quar)": "#d62728",           # Solid Red
+    "CC7 (MLP - NoQuar)": "#9467bd",         # Purple
+    "CC8 (FedSIGN + Quar)": "#2ca02c",       # Green
+    "CC8 (FedSIGN - NoQuar)": "#98df8a",     # Light Green
 }
-# Per-cc FPR x FRR plots: cc3/cc7 from fpr_frr_results_{cc}.csv, cc5 (no defense) from f.csv.
-INDIVIDUAL_FPR_FRR = {3: "fpr_frr_results_3.csv", 5: "f.csv", 7: "fpr_frr_results_7.csv"}
+
+LINESTYLES = {
+    "CC2 (zPROBE + Quar)": "-",
+    "CC2 (zPROBE - NoQuar)": "--",
+    "CC3 (MONZA + Quar)": "-",
+    "CC3 (MONZA - NoQuar)": "--",
+    "CC5 (No Defense)": ":",
+    "CC7 (MLP + Quar)": "-",
+    "CC7 (MLP - NoQuar)": "--",
+    "CC8 (FedSIGN + Quar)": "-",
+    "CC8 (FedSIGN - NoQuar)": "--",
+}
+
+INDIVIDUAL_FPR_FRR = {
+    "2": "fpr_frr_results_2.csv",
+    "2_noquarantine": "fpr_frr_results_2_noquarantine.csv",
+    "3": "fpr_frr_results_3.csv",
+    "3_noquarantine": "fpr_frr_results_3_noquarantine.csv",
+    "7": "fpr_frr_results_7.csv",
+    "7_noquarantine": "fpr_frr_results_7_noquarantine.csv",
+    "8": "fpr_frr_results_8.csv",
+    "8_noquarantine": "fpr_frr_results_8_noquarantine.csv",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,12 +120,12 @@ def parse_args() -> argparse.Namespace:
         "--num-malicious",
         type=int,
         default=30,
-        help="Malicious-client count used to select the cc=3/5/7 comparison H5 files.",
+        help="Malicious-client count used to select comparison H5 files.",
     )
     return parser.parse_args()
 
 
-def load_cc_type(system_dir: Path, min_rounds: int, selected_ccs: list[int]) -> pd.DataFrame:
+def load_cc_type(system_dir: Path, min_rounds: int, selected_ccs: list) -> pd.DataFrame:
     frames = []
     for cc in selected_ccs:
         path = system_dir / f"cc_type_results_{cc}.csv"
@@ -79,14 +135,16 @@ def load_cc_type(system_dir: Path, min_rounds: int, selected_ccs: list[int]) -> 
         if df.empty:
             continue
         df = latest_run(df, min_rounds=min_rounds)
-        for col in ["Round", "CC", "Total", "Removed"]:
-            df[col] = df[col].astype(int)
+        for col in ["Round", "Total", "Removed"]:
+            if col in df.columns:
+                df[col] = df[col].astype(int)
         df["Rate"] = df["Rate"].astype(float)
+        df["CC_Key"] = str(cc)
+        df["Defense"] = DEFENSE_LABELS.get(str(cc), f"cc={cc}")
         frames.append(df)
     if not frames:
         raise FileNotFoundError(f"Nenhum cc_type_results_*.csv encontrado em {system_dir}")
     out = pd.concat(frames, ignore_index=True)
-    out["Defense"] = out["CC"].map(DEFENSE_LABELS).fillna("cc=" + out["CC"].astype(str))
     return out
 
 
@@ -106,10 +164,7 @@ def latest_run(df: pd.DataFrame, min_rounds: int) -> pd.DataFrame:
     return df.loc[start:].copy()
 
 
-def load_fpr_frr(system_dir: Path, min_rounds: int, selected_ccs: list[int]) -> dict[str, pd.DataFrame]:
-    # Columns are normalized to DetectionFPR/DetectionFRR (per-round, paper Eq 14/15)
-    # and QuarantineFPR/QuarantineFRR (quarantine-occupancy diagnostic). Legacy CSVs
-    # with UploadFPR/FPR are mapped automatically by _fpr_frr_io.load_fpr_frr.
+def load_fpr_frr(system_dir: Path, min_rounds: int, selected_ccs: list) -> dict[str, pd.DataFrame]:
     frames: dict[str, pd.DataFrame] = {}
     for cc in selected_ccs:
         path = system_dir / f"fpr_frr_results_{cc}.csv"
@@ -118,77 +173,73 @@ def load_fpr_frr(system_dir: Path, min_rounds: int, selected_ccs: list[int]) -> 
         df = _load_fpr_frr_csv(path, min_rounds=min_rounds)
         if "DetectionFPR" not in df.columns:
             raise ValueError(f"{path.name} sem coluna de deteccao (Detection/Upload FPR)")
-        frames[DEFENSE_LABELS.get(cc, f"cc={cc}")] = df
+        label = DEFENSE_LABELS.get(str(cc), f"cc={cc}")
+        frames[label] = df
     return frames
 
 
-def find_latest_h5(results_dir: Path, dataset: str, cc: int) -> Path | None:
-    if not results_dir.exists():
-        return None
-    candidates = sorted(
-        results_dir.glob(f"{dataset}_FedAvg_{cc}_*_test_*.h5"),
-        key=lambda path: path.stat().st_mtime,
-    )
-    return candidates[-1] if candidates else None
-
-
-def load_accuracy(results_dir: Path, dataset: str, selected_ccs: list[int]) -> pd.DataFrame:
-    rows = []
-    for cc in selected_ccs:
-        path = find_latest_h5(results_dir, dataset, cc)
-        if path is None:
-            continue
-        with h5py.File(path, "r") as h5:
-            if "rs_test_acc" not in h5:
-                continue
-            acc = np.asarray(h5["rs_test_acc"], dtype=float)
-        for round_idx, value in enumerate(acc):
-            rows.append(
-                {
-                    "Round": round_idx,
-                    "Accuracy": float(value),
-                    "Defense": DEFENSE_LABELS.get(cc, f"cc={cc}"),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-def find_scenario_h5(
-    results_dir: Path, dataset: str, cc: int, num_malicious: int
+def find_latest_h5(
+    system_dir: Path,
+    results_dir: Path,
+    dataset: str,
+    cc: str | int,
+    max_rounds: int | None = None,
 ) -> Path | None:
-    candidates = sorted(
-        results_dir.glob(
-            f"{dataset}_FedAvg_{cc}_*_{num_malicious}_test_*.h5"
-        ),
-        key=lambda path: path.stat().st_mtime,
-    )
-    return candidates[-1] if candidates else None
+    search_dirs = [system_dir, results_dir]
+    cc_str = str(cc)
+    cc_clean = cc_str.split("_")[0]
+    is_noquar = "noquarantine" in cc_str
+
+    for d in search_dirs:
+        if not d.exists():
+            continue
+        pattern = f"*{dataset}*{cc_clean}*.h5"
+        raw_candidates = list(d.glob(pattern))
+        matching = [
+            p for p in raw_candidates
+            if ("noquarantine" in p.name.lower()) == is_noquar
+        ]
+        candidates = sorted(matching if matching else raw_candidates, key=lambda p: p.stat().st_mtime)
+        if not candidates:
+            continue
+        if max_rounds is not None:
+            for p in reversed(candidates):
+                try:
+                    with h5py.File(p, "r") as h5:
+                        if "rs_test_acc" in h5:
+                            if len(h5["rs_test_acc"]) <= max_rounds + 5:
+                                return p
+                except Exception:
+                    pass
+        return candidates[-1]
+    return None
 
 
-def load_three_way_accuracy(
-    results_dir: Path, dataset: str, num_malicious: int
+def load_accuracy(
+    system_dir: Path,
+    results_dir: Path,
+    dataset: str,
+    selected_ccs: list,
+    max_rounds: int | None = None,
 ) -> pd.DataFrame:
     rows = []
-    for cc in COMPARISON_CCS:
-        path = find_scenario_h5(results_dir, dataset, cc, num_malicious)
+    for cc in selected_ccs:
+        path = find_latest_h5(system_dir, results_dir, dataset, cc, max_rounds=max_rounds)
         if path is None:
-            print(
-                f"Comparacao: H5 ausente para cc={cc}, "
-                f"dataset={dataset}, nmal={num_malicious}"
-            )
             continue
         with h5py.File(path, "r") as h5:
             if "rs_test_acc" not in h5:
                 continue
             acc = np.asarray(h5["rs_test_acc"], dtype=float)
+            if max_rounds is not None and len(acc) > max_rounds + 1:
+                acc = acc[: max_rounds + 1]
+        label = DEFENSE_LABELS.get(str(cc), f"cc={cc}")
         for round_idx, value in enumerate(acc):
             rows.append(
                 {
                     "Round": round_idx,
                     "Accuracy": float(value),
-                    "CC": cc,
-                    "Defense": DEFENSE_LABELS[cc],
-                    "File": path.name,
+                    "Defense": label,
                 }
             )
     return pd.DataFrame(rows)
@@ -196,16 +247,19 @@ def load_three_way_accuracy(
 
 def summarize_tail(df: pd.DataFrame, tail_rounds: int) -> pd.DataFrame:
     rows = []
-    for cc, cc_group in df.groupby("CC", sort=True):
+    group_col = "CC_Key" if "CC_Key" in df.columns else "Defense"
+    for cc_key, cc_group in df.groupby(group_col, sort=True):
         tail_round_values = sorted(cc_group["Round"].astype(int).unique())[-tail_rounds:]
         tail_cc = cc_group[cc_group["Round"].isin(tail_round_values)]
+        defense = DEFENSE_LABELS.get(str(cc_key), str(cc_key))
         for attack_type, group in tail_cc.groupby("AttackType", sort=True):
             total = group["Total"].sum()
             removed = group["Removed"].sum()
             rows.append(
                 {
-                    "CC": cc,
-                    "Defense": DEFENSE_LABELS.get(int(cc), f"cc={cc}"),
+                    "CC": str(cc_key),
+                    "CC_Key": str(cc_key),
+                    "Defense": defense,
                     "AttackType": attack_type,
                     "Total": int(total),
                     "Removed": int(removed),
@@ -221,33 +275,36 @@ def plot_summary(summary: pd.DataFrame, out_dir: Path) -> None:
     pivot = summary.pivot_table(index="AttackType", columns="Defense", values="Rate", aggfunc="mean")
     pivot = pivot.reindex([x for x in order if x in pivot.index] + [x for x in pivot.index if x not in order])
 
-    fig, ax = plt.subplots(figsize=(12, 5))
-    pivot.plot.bar(ax=ax, width=0.78)
-    ax.axhline(0.05, color="gray", linestyle=":", linewidth=1.3, label="FPR target 5%")
-    ax.set_title("FPR em benignos e recall por tipo de ataque nos CCs")
-    ax.set_ylabel("Taxa")
-    ax.set_xlabel("")
+    fig, ax = plt.subplots(figsize=(14, 7))
+    pivot.plot.bar(ax=ax, width=0.78, color=[COLORS.get(col, "#333333") for col in pivot.columns])
+    ax.axhline(0.05, color="gray", linestyle=":", linewidth=2.0, label="FPR target 5%")
+    ax.set_title("FPR on Benign and Recall by Attack Type across Defenses", fontsize=20, fontweight="bold", pad=14)
+    ax.set_ylabel("Rate", fontsize=18, fontweight="bold", labelpad=10)
+    ax.set_xlabel("", fontsize=18, fontweight="bold")
     ax.set_ylim(0, max(1.0, float(pivot.max().max()) * 1.15))
-    ax.set_xticklabels(pivot.index, rotation=20, ha="right")
-    ax.grid(axis="y", alpha=0.25)
-    ax.legend()
+    ax.set_xticklabels(pivot.index, rotation=20, ha="right", fontsize=16)
+    ax.tick_params(axis="both", which="major", labelsize=16, length=7, width=2)
+    ax.grid(axis="y", alpha=0.3, linewidth=1.0)
+    ax.legend(fontsize=14, frameon=True, framealpha=0.9)
     fig.tight_layout()
     fig.savefig(out_dir / "plot_cc_recall_by_attack_type.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_label(summary: pd.DataFrame, out_dir: Path) -> None:
-    label = summary[summary["AttackType"] == "malicious_label"].sort_values("CC")
+    label = summary[summary["AttackType"] == "malicious_label"].sort_values("Defense")
     if label.empty:
         return
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(label["Defense"], label["Rate"], color="#8c564b")
-    ax.set_title("Recall do CC em malicious_label")
-    ax.set_ylabel("Recall")
+    fig, ax = plt.subplots(figsize=(11, 6))
+    colors = [COLORS.get(d, "#8c564b") for d in label["Defense"]]
+    ax.bar(label["Defense"], label["Rate"], color=colors, width=0.6)
+    ax.set_title("Recall in malicious_label Attack", fontsize=20, fontweight="bold", pad=14)
+    ax.set_ylabel("Recall", fontsize=18, fontweight="bold", labelpad=10)
     ax.set_ylim(0, max(1.0, float(label["Rate"].max()) * 1.2))
-    ax.grid(axis="y", alpha=0.25)
+    ax.tick_params(axis="both", which="major", labelsize=16, length=7, width=2)
+    ax.grid(axis="y", alpha=0.3, linewidth=1.0)
     for idx, value in enumerate(label["Rate"]):
-        ax.text(idx, value + 0.02, f"{value:.2f}", ha="center", va="bottom")
+        ax.text(idx, value + 0.02, f"{value:.2%}", ha="center", va="bottom", fontsize=15, fontweight="bold")
     fig.tight_layout()
     fig.savefig(out_dir / "plot_cc_malicious_label_recall.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
@@ -256,229 +313,178 @@ def plot_label(summary: pd.DataFrame, out_dir: Path) -> None:
 def plot_fpr_frr_by_round(dfs: dict[str, pd.DataFrame], out_dir: Path) -> None:
     if not dfs:
         return
-    fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharex=True)
+
+    # 1. Standalone plot: Detection FPR per Round
+    fig, ax = plt.subplots(figsize=(14, 6.5))
     for name, df in dfs.items():
         color = COLORS.get(name, "#333333")
-        # Headline: per-round detection rate (paper Eq 14/15).
-        axes[0].plot(df["Round"], df["DetectionFPR"], label=name, color=color, linewidth=2)
-        axes[1].plot(df["Round"], df["DetectionFRR"], label=name, color=color, linewidth=2)
-        # Diagnostic: quarantine-occupancy snapshot (dashed, thinner).
-        if "QuarantineFPR" in df.columns:
-            axes[0].plot(df["Round"], df["QuarantineFPR"], color=color, linewidth=1,
-                         linestyle="--", alpha=0.5)
-            axes[1].plot(df["Round"], df["QuarantineFRR"], color=color, linewidth=1,
-                         linestyle="--", alpha=0.5)
-    axes[0].set_title("Detection FPR por round (tracejado = ocupacao de quarentena)")
-    axes[0].set_xlabel("Round")
-    axes[0].set_ylabel("DetectionFPR")
-    axes[0].grid(True, alpha=0.3)
-    axes[0].legend(loc="upper left", fontsize=8)
-    axes[0].set_ylim(-0.01, max(0.30, axes[0].get_ylim()[1]))
-    axes[1].set_title("Detection FRR por round (tracejado = ocupacao de quarentena)")
-    axes[1].set_xlabel("Round")
-    axes[1].set_ylabel("DetectionFRR")
-    axes[1].grid(True, alpha=0.3)
-    axes[1].legend(loc="upper left", fontsize=8)
-    axes[1].set_ylim(-0.01, max(0.60, axes[1].get_ylim()[1]))
+        linestyle = LINESTYLES.get(name, "-")
+        ax.plot(df["Round"], df["DetectionFPR"], label=name, color=color, linestyle=linestyle, linewidth=3.0)
+        if "QuarantineFPR" in df.columns and "NoQuar" not in name:
+            ax.plot(df["Round"], df["QuarantineFPR"], color=color, linewidth=1.5, linestyle=":", alpha=0.6)
+    ax.set_title("Detection FPR per Round", fontsize=20, fontweight="bold", pad=14)
+    ax.set_xlabel("Round", fontsize=18, fontweight="bold", labelpad=10)
+    ax.set_ylabel("Detection FPR", fontsize=18, fontweight="bold", labelpad=10)
+    ax.tick_params(axis="both", which="major", labelsize=16, length=7, width=2)
+    ax.grid(True, alpha=0.3, linewidth=1.0)
+    ax.legend(loc="upper left", fontsize=13, frameon=True, framealpha=0.9)
+    ax.set_ylim(-0.01, 1.02)
+    fig.tight_layout()
+    fig.savefig(out_dir / "plot_detection_fpr_by_round.png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+    # 2. Standalone plot: Detection FRR per Round
+    fig, ax = plt.subplots(figsize=(14, 6.5))
+    for name, df in dfs.items():
+        color = COLORS.get(name, "#333333")
+        linestyle = LINESTYLES.get(name, "-")
+        ax.plot(df["Round"], df["DetectionFRR"], label=name, color=color, linestyle=linestyle, linewidth=3.0)
+        if "QuarantineFRR" in df.columns and "NoQuar" not in name:
+            ax.plot(df["Round"], df["QuarantineFRR"], color=color, linewidth=1.5, linestyle=":", alpha=0.6)
+    ax.set_title("Detection FRR per Round", fontsize=20, fontweight="bold", pad=14)
+    ax.set_xlabel("Round", fontsize=18, fontweight="bold", labelpad=10)
+    ax.set_ylabel("Detection FRR", fontsize=18, fontweight="bold", labelpad=10)
+    ax.tick_params(axis="both", which="major", labelsize=16, length=7, width=2)
+    ax.grid(True, alpha=0.3, linewidth=1.0)
+    ax.legend(loc="upper left", fontsize=13, frameon=True, framealpha=0.9)
+    ax.set_ylim(-0.01, 1.02)
+    fig.tight_layout()
+    fig.savefig(out_dir / "plot_detection_frr_by_round.png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+    # 3. Two-panel combined plot (for backwards compatibility)
+    fig, axes = plt.subplots(1, 2, figsize=(18, 6.5), sharex=True)
+    for name, df in dfs.items():
+        color = COLORS.get(name, "#333333")
+        linestyle = LINESTYLES.get(name, "-")
+        axes[0].plot(df["Round"], df["DetectionFPR"], label=name, color=color, linestyle=linestyle, linewidth=2.8)
+        axes[1].plot(df["Round"], df["DetectionFRR"], label=name, color=color, linestyle=linestyle, linewidth=2.8)
+        if "QuarantineFPR" in df.columns and "NoQuar" not in name:
+            axes[0].plot(df["Round"], df["QuarantineFPR"], color=color, linewidth=1.3, linestyle=":", alpha=0.6)
+            axes[1].plot(df["Round"], df["QuarantineFRR"], color=color, linewidth=1.3, linestyle=":", alpha=0.6)
+
+    axes[0].set_title("Detection FPR per Round", fontsize=18, fontweight="bold", pad=12)
+    axes[0].set_xlabel("Round", fontsize=16, fontweight="bold", labelpad=8)
+    axes[0].set_ylabel("Detection FPR", fontsize=16, fontweight="bold", labelpad=8)
+    axes[0].tick_params(axis="both", which="major", labelsize=14)
+    axes[0].grid(True, alpha=0.3, linewidth=0.8)
+    axes[0].legend(loc="upper left", fontsize=12, frameon=True)
+    axes[0].set_ylim(-0.01, 1.02)
+
+    axes[1].set_title("Detection FRR per Round", fontsize=18, fontweight="bold", pad=12)
+    axes[1].set_xlabel("Round", fontsize=16, fontweight="bold", labelpad=8)
+    axes[1].set_ylabel("Detection FRR", fontsize=16, fontweight="bold", labelpad=8)
+    axes[1].tick_params(axis="both", which="major", labelsize=14)
+    axes[1].grid(True, alpha=0.3, linewidth=0.8)
+    axes[1].legend(loc="upper left", fontsize=12, frameon=True)
+    axes[1].set_ylim(-0.01, 1.02)
+
     fig.tight_layout()
     fig.savefig(out_dir / "plot_fpr_frr_by_round.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
-def _draw_fpr_frr(frames: dict[str, pd.DataFrame], title: str, out_path: Path) -> None:
-    """2 panels (DetectionFPR / DetectionFRR by round) for each named frame; quarantine dashed."""
-    if not frames:
-        return
-    fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharex=True)
-    for name, df in frames.items():
-        color = COLORS.get(name, "#333333")
-        det_fpr = df.get("DetectionFPR")
-        det_frr = df.get("DetectionFRR")
-        if det_fpr is not None:
-            axes[0].plot(df["Round"], det_fpr.fillna(0.0), label=name, color=color, linewidth=2)
-        if det_frr is not None:
-            axes[1].plot(df["Round"], det_frr.fillna(0.0), label=name, color=color, linewidth=2)
-        if "QuarantineFPR" in df.columns:
-            axes[0].plot(df["Round"], df["QuarantineFPR"].fillna(0.0), color=color,
-                         linewidth=1, linestyle="--", alpha=0.5)
-            axes[1].plot(df["Round"], df["QuarantineFRR"].fillna(0.0), color=color,
-                         linewidth=1, linestyle="--", alpha=0.5)
-    axes[0].set_title(f"{title} — Detection FPR (tracejado = ocupacao de quarentena)")
-    axes[0].set_xlabel("Round"); axes[0].set_ylabel("DetectionFPR")
-    axes[0].grid(True, alpha=0.3); axes[0].legend(loc="upper left", fontsize=8)
-    axes[0].set_ylim(-0.01, max(0.30, axes[0].get_ylim()[1]))
-    axes[1].set_title(f"{title} — Detection FRR")
-    axes[1].set_xlabel("Round"); axes[1].set_ylabel("DetectionFRR")
-    axes[1].grid(True, alpha=0.3); axes[1].legend(loc="upper left", fontsize=8)
-    axes[1].set_ylim(-0.01, max(0.60, axes[1].get_ylim()[1]))
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=160, bbox_inches="tight")
-    plt.close(fig)
-
-
-def plot_fpr_frr_individual(system_dir: Path, min_rounds: int, out_dir: Path) -> None:
-    """Per-cc FPR x FRR plots (cc3, cc5, cc7) plus a cc3-vs-cc7 comparison."""
-    loaded: dict[int, pd.DataFrame] = {}
-    for cc, fname in INDIVIDUAL_FPR_FRR.items():
-        path = system_dir / fname
-        if not path.exists():
-            continue
-        try:
-            loaded[cc] = _load_fpr_frr_csv(path, min_rounds=min_rounds)
-        except Exception as exc:
-            print(f"Ignorando {fname} (cc={cc}): {exc}")
-    for cc, df in loaded.items():
-        label = DEFENSE_LABELS.get(cc, f"cc={cc}")
-        _draw_fpr_frr({label: df}, label, out_dir / f"plot_fpr_frr_cc{cc}.png")
-    if 3 in loaded and 7 in loaded:
-        cmp = {DEFENSE_LABELS[3]: loaded[3], DEFENSE_LABELS[7]: loaded[7]}
-        _draw_fpr_frr(cmp, "cc=3 vs cc=7", out_dir / "plot_fpr_frr_cc3_vs_cc7.png")
-
-
 def plot_accuracy(accuracy_df: pd.DataFrame, out_dir: Path) -> None:
     if accuracy_df.empty:
         return
-    fig, ax = plt.subplots(figsize=(14, 6))
+    fig, ax = plt.subplots(figsize=(14, 6.5))
     for name, group in accuracy_df.groupby("Defense", sort=False):
+        linestyle = LINESTYLES.get(name, "-")
         ax.plot(
             group["Round"],
             group["Accuracy"],
             label=name,
             color=COLORS.get(name, "#333333"),
-            linewidth=2,
+            linestyle=linestyle,
+            linewidth=3.0,
         )
-    ax.set_title("Acuracia global federada por round")
-    ax.set_xlabel("Round")
-    ax.set_ylabel("Acuracia de teste")
+    ax.set_title("Global Model Test Accuracy per Round", fontsize=20, fontweight="bold", pad=14)
+    ax.set_xlabel("Round", fontsize=18, fontweight="bold", labelpad=10)
+    ax.set_ylabel("Test Accuracy", fontsize=18, fontweight="bold", labelpad=10)
+    ax.tick_params(axis="both", which="major", labelsize=16, length=7, width=2)
     ax.set_ylim(0.0, 1.02)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="lower right", fontsize=8)
+    ax.grid(True, alpha=0.3, linewidth=1.0)
+    ax.legend(loc="lower right", fontsize=13, frameon=True, framealpha=0.9)
     fig.tight_layout()
     fig.savefig(out_dir / "plot_global_accuracy_by_round.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_three_way_accuracy(accuracy_df: pd.DataFrame, out_dir: Path) -> None:
-    if accuracy_df.empty:
-        return
-    comparison_dir = out_dir / "comparison_cc3_cc5_cc7"
-    comparison_dir.mkdir(parents=True, exist_ok=True)
-
-    fig, ax = plt.subplots(figsize=(14, 6))
-    for name, group in accuracy_df.groupby("Defense", sort=False):
-        ax.plot(
-            group["Round"],
-            group["Accuracy"],
-            label=name,
-            color=COLORS.get(name, "#333333"),
-            linewidth=2,
-        )
-    ax.set_title("Acuracia global: cc=3 vs cc=5 vs cc=7")
-    ax.set_xlabel("Round")
-    ax.set_ylabel("Acuracia de teste")
-    ax.set_ylim(0.0, 1.02)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="lower right", fontsize=8)
-    fig.tight_layout()
-    fig.savefig(
-        comparison_dir / "plot_global_accuracy_cc3_cc5_cc7.png",
-        dpi=160,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
-
-    summary = (
-        accuracy_df.groupby(["CC", "Defense", "File"], sort=False)["Accuracy"]
-        .agg(Rounds="size", BestAccuracy="max", FinalAccuracy="last")
-        .reset_index()
-    )
-    summary.to_csv(
-        comparison_dir / "accuracy_summary_cc3_cc5_cc7.csv", index=False
-    )
-
-    x = np.arange(len(summary))
-    width = 0.36
-    fig, ax = plt.subplots(figsize=(11, 5))
-    ax.bar(x - width / 2, summary["BestAccuracy"], width, label="Melhor")
-    ax.bar(x + width / 2, summary["FinalAccuracy"], width, label="Final")
-    ax.set_title("Melhor acuracia e acuracia final")
-    ax.set_ylabel("Acuracia de teste")
-    ax.set_ylim(0.0, 1.02)
-    ax.set_xticks(x, summary["Defense"], rotation=12, ha="right")
-    ax.grid(axis="y", alpha=0.25)
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(
-        comparison_dir / "plot_best_final_accuracy_cc3_cc5_cc7.png",
-        dpi=160,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
-
-
 def plot_recall_by_round(df: pd.DataFrame, out_dir: Path) -> None:
+    group_col = "CC_Key" if "CC_Key" in df.columns else "CC"
     recall_round = df[
-        (df["CC"].isin(SELECTED_CCS))
-        & (df["AttackType"].isin(ATTACK_TYPES))
+        (df["AttackType"].isin(ATTACK_TYPES))
         & (df["Metric"].str.lower() == "recall")
     ].copy()
     if recall_round.empty:
         return
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True, sharey=True)
-    axes = axes.ravel()
-    for ax, attack_type in zip(axes, ATTACK_TYPES):
+    # 1. Standalone single-panel plots for EACH individual attack type
+    for attack_type in ATTACK_TYPES:
         sub = recall_round[recall_round["AttackType"] == attack_type]
-        for cc in SELECTED_CCS:
-            group = sub[sub["CC"] == cc].sort_values("Round")
+        if sub.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(14, 6.5))
+        for cc_key in SELECTED_CCS:
+            group = sub[sub[group_col].astype(str) == str(cc_key)].sort_values("Round")
             if group.empty:
                 continue
-            label = DEFENSE_LABELS.get(cc, f"cc={cc}")
+            label = DEFENSE_LABELS.get(str(cc_key), f"cc={cc_key}")
+            linestyle = LINESTYLES.get(label, "-")
             ax.plot(
                 group["Round"],
                 group["Rate"],
                 marker="o",
-                markersize=3,
-                linewidth=1.8,
-                color=COLORS.get(label),
+                markersize=6,
+                linewidth=3.0,
+                linestyle=linestyle,
+                color=COLORS.get(label, "#333333"),
                 label=label,
             )
-        ax.set_title(attack_type)
-        ax.set_xlabel("Round")
-        ax.set_ylabel("Recall")
+        ax.set_title(f"Recall per Round: {attack_type}", fontsize=20, fontweight="bold", pad=14)
+        ax.set_xlabel("Round", fontsize=18, fontweight="bold", labelpad=10)
+        ax.set_ylabel("Recall", fontsize=18, fontweight="bold", labelpad=10)
+        ax.tick_params(axis="both", which="major", labelsize=16, length=7, width=2)
         ax.set_ylim(-0.02, 1.05)
-        ax.grid(True, alpha=0.25)
+        ax.grid(True, alpha=0.3, linewidth=1.0)
+        ax.legend(fontsize=13, loc="lower right", frameon=True, framealpha=0.9)
+        fig.tight_layout()
+        fig.savefig(out_dir / f"plot_cc_recall_{attack_type}_by_round.png", dpi=160, bbox_inches="tight")
+        plt.close(fig)
+
+    # 2. Combined 2x2 grid plot (for backwards compatibility)
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True, sharey=True)
+    axes = axes.ravel()
+    for ax, attack_type in zip(axes, ATTACK_TYPES):
+        sub = recall_round[recall_round["AttackType"] == attack_type]
+        for cc_key in SELECTED_CCS:
+            group = sub[sub[group_col].astype(str) == str(cc_key)].sort_values("Round")
+            if group.empty:
+                continue
+            label = DEFENSE_LABELS.get(str(cc_key), f"cc={cc_key}")
+            linestyle = LINESTYLES.get(label, "-")
+            ax.plot(
+                group["Round"],
+                group["Rate"],
+                marker="o",
+                markersize=4,
+                linewidth=2.2,
+                linestyle=linestyle,
+                color=COLORS.get(label, "#333333"),
+                label=label,
+            )
+        ax.set_title(f"Attack: {attack_type}", fontsize=16, fontweight="bold", pad=10)
+        ax.set_xlabel("Round", fontsize=14, fontweight="bold", labelpad=6)
+        ax.set_ylabel("Recall", fontsize=14, fontweight="bold", labelpad=6)
+        ax.tick_params(axis="both", which="major", labelsize=12)
+        ax.set_ylim(-0.02, 1.05)
+        ax.grid(True, alpha=0.3, linewidth=0.8)
+
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=True)
-    fig.suptitle("Recall por tipo de ataque ao longo dos rounds", y=1.03, fontsize=14)
+    fig.legend(handles, labels, loc="upper center", ncol=4, fontsize=12, frameon=True, bbox_to_anchor=(0.5, 1.03))
+    fig.suptitle("Recall by Attack Type Over Rounds", y=1.06, fontsize=18, fontweight="bold")
     fig.tight_layout()
     fig.savefig(out_dir / "plot_cc_recall_by_attack_over_rounds.png", dpi=160, bbox_inches="tight")
-    plt.close(fig)
-
-    fig, ax = plt.subplots(figsize=(12, 4.5))
-    label_round = recall_round[recall_round["AttackType"] == "malicious_label"]
-    for cc in SELECTED_CCS:
-        group = label_round[label_round["CC"] == cc].sort_values("Round")
-        if group.empty:
-            continue
-        label = DEFENSE_LABELS.get(cc, f"cc={cc}")
-        ax.plot(
-            group["Round"],
-            group["Rate"],
-            marker="o",
-            markersize=4,
-            linewidth=2,
-            color=COLORS.get(label),
-            label=label,
-        )
-    ax.set_title("Recall em malicious_label por round")
-    ax.set_xlabel("Round")
-    ax.set_ylabel("Recall")
-    ax.set_ylim(-0.02, 1.05)
-    ax.grid(True, alpha=0.25)
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(out_dir / "plot_cc_malicious_label_recall_by_round.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -486,17 +492,15 @@ def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     df = load_cc_type(args.system_dir, args.tail_rounds, SELECTED_CCS)
+    max_rounds = int(df["Round"].max()) if not df.empty and "Round" in df.columns else None
+
     fpr_frr = load_fpr_frr(args.system_dir, args.tail_rounds, SELECTED_CCS)
-    accuracy = load_accuracy(args.results_dir, args.dataset, SELECTED_CCS)
-    comparison_accuracy = load_three_way_accuracy(
-        args.results_dir, args.dataset, args.num_malicious
-    )
+    accuracy = load_accuracy(args.system_dir, args.results_dir, args.dataset, SELECTED_CCS, max_rounds=max_rounds)
     summary = summarize_tail(df, args.tail_rounds)
     summary.to_csv(args.out_dir / "cc_attack_type_summary.csv", index=False)
+
     plot_fpr_frr_by_round(fpr_frr, args.out_dir)
-    plot_fpr_frr_individual(args.system_dir, args.tail_rounds, args.out_dir)
     plot_accuracy(accuracy, args.out_dir)
-    plot_three_way_accuracy(comparison_accuracy, args.out_dir)
     plot_summary(summary, args.out_dir)
     plot_label(summary, args.out_dir)
     plot_recall_by_round(df, args.out_dir)

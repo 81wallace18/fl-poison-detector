@@ -43,12 +43,15 @@ class ClientMaliciousAVG(clientAVG):
             return 'malicious_shuffle'
         if self.atack == 'label':
             return 'malicious_label'
+        if self.atack == 'alie':
+            return 'malicious_alie'
         if self.atack == 'all':
             return random.choice([
                 'malicious_zeros',
                 'malicious_random',
                 'malicious_shuffle',
                 'malicious_label',
+                'malicious_alie',
             ])
         return 'benign'
 

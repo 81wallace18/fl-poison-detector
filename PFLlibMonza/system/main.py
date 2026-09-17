@@ -509,7 +509,7 @@ if __name__ == "__main__":
     parser.add_argument('-atk', '--atack', type = str, default='random')
     parser.add_argument('-ria', '--round_init_atk', type = int, default=0)
     parser.add_argument('-rfake', '--rate_client_fake', type = float, default=1.0) # de 0 a 1
-    parser.add_argument('-cc', '--cluster_comparation', type = int, default=5) # 2 cluster cosseno, 3 cosseno+score, 5 dump, 7 MLP
+    parser.add_argument('-cc', '--cluster_comparation', type = int, default=5) # 2 cluster cosseno (zPROBE), 3 cosseno+score (MONZA), 5 dump, 7 MLP, 8 FedSIGN
     parser.add_argument('--label_flip_epochs', type=int, default=5,
         help='Epocas locais do ataque malicious_label. Afeta apenas clientes maliciosos label-flip.')
     parser.add_argument('--label_flip_lr_multiplier', type=float, default=1.0,
@@ -518,10 +518,12 @@ if __name__ == "__main__":
         help='Se setado, dumpa state_dicts dos clients em cada round nesse diretorio (formato fl_save).')
     parser.add_argument('--dump_start_round', type=int, default=0,
         help='Primeiro round salvo por --dump_state_dicts. Use com -ria para warm-up limpo antes do dump.')
+    parser.add_argument('--disable_quarantine', action='store_true',
+        help='Desativa o sistema de quarentena. Clientes detectados sao descartados no round mas podem participar no proximo.')
     parser.add_argument('--detector_dir', type=str, default='',
         help='Path do detector MLP treinado. Usado em -cc 7.')
     parser.add_argument('--mlp_threshold_key', type=str, default='threshold_label_fpr05',
-        choices=['tuned', 'threshold_fpr05', 'threshold_label_fpr05', 'combined_label_fpr05'],
+        choices=['tuned', 'threshold_fpr05', 'threshold_label_fpr05', 'combined_label_fpr05', 'combined_label_fpr01'],
         help='Chave de threshold do report.json usada pelo MLP.')
     parser.add_argument('--mlp_threshold_value', type=float, default=None,
         help='Threshold binario manual do MLP. Se setado, sobrescreve --mlp_threshold_key.')
@@ -531,8 +533,8 @@ if __name__ == "__main__":
         raise ValueError("--rate_client_fake/-rfake deve ficar entre 0 e 1.")
     if args.dump_start_round < 0:
         raise ValueError("--dump_start_round deve ser >= 0.")
-    if args.cluster_comparation not in (2, 3, 5, 7):
-        raise ValueError("-cc suportado no fluxo normalizado: 2 cluster, 3 score, 5 dump/sem defesa, 7 MLP.")
+    if args.cluster_comparation not in (2, 3, 5, 7, 8):
+        raise ValueError("-cc suportado no fluxo normalizado: 2 cluster (zPROBE), 3 score (MONZA), 5 dump/sem defesa, 7 MLP, 8 FedSIGN.")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
     os.environ["DATASET_NAME"] = args.dataset

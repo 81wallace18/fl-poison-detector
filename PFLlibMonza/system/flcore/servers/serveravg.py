@@ -4,33 +4,42 @@ from flcore.clients.clientavg import clientAVG
 from flcore.servers.serverbase import Server
 from threading import Thread
 import numpy as np
+import torch
 from collections import Counter
+import copy
 import csv
 import os
+from flcore.attack.attack import model_alie, verify_alie_attack
 from flcore.detector import fl_save
 from flcore.detector.cc_mlp import ClientCheckMLP
+from flcore.detector.context_features import (
+    _eval_state_dict,
+    _canonical_model_state,
+)
+
+# Rollback safety net: revert aggregation if val accuracy drops by more than
+# this many percentage points relative to the best accuracy seen so far.
+_ROLLBACK_DROP_PP = 0.15  # 15 percentage points
 class FedAvg(Server):
     def __init__(self, args, times):
         super().__init__(args, times)
         self.fpr_frr_results = []
         self.run_id = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        self.disable_quarantine = bool(getattr(args, 'disable_quarantine', False) or (os.environ.get('DISABLE_QUARANTINE', '0') == '1'))
 
         # Open the CSV file in append mode to save results over time
-        if self.cc ==3:
-            self.csv_filename = 'fpr_frr_results_3.csv'
-        elif self.cc ==2:
-            self.csv_filename = 'fpr_frr_results_2.csv'
-        elif self.cc ==7:
-            self.csv_filename = 'fpr_frr_results_7.csv'
+        suffix = f"{self.cc}_noquarantine" if self.disable_quarantine else f"{self.cc}"
+        if self.cc in (2, 3, 7, 8):
+            self.csv_filename = f'fpr_frr_results_{suffix}.csv'
         else:
             self.csv_filename = 'f.csv'
         self._ensure_csv_header(
             self.csv_filename,
             ['RunID', 'Round', 'DetectionFPR', 'DetectionFRR', 'QuarantineFPR', 'QuarantineFRR'],
         )
-        self.cc_detail_filename = f'cc_detail_results_{self.cc}.csv'
-        self.cc_type_filename = f'cc_type_results_{self.cc}.csv'
-        if self.cc in (2, 3, 7):
+        self.cc_detail_filename = f'cc_detail_results_{suffix}.csv'
+        self.cc_type_filename = f'cc_type_results_{suffix}.csv'
+        if self.cc in (2, 3, 7, 8):
             detail_header = [
                 'RunID', 'Round', 'CC', 'ClientID', 'AttackType', 'IsMaliciousRound',
                 'MaliciousGroup', 'Removed', 'Reason', 'MLPHit', 'MLPScore',
@@ -187,8 +196,10 @@ class FedAvg(Server):
         return fpr, frr
 
     def set_client_quarantine(self, client_id):
+        if getattr(self, 'disable_quarantine', False):
+            return
         self.client_quarantine_dict[client_id]['quarentena'] = self.client_quarantine_dict[client_id]['quarentena'] +1
-        self.client_quarantine_dict[client_id]['roundsQuarent'] = 2 ** self.client_quarantine_dict[client_id]['quarentena']
+        self.client_quarantine_dict[client_id]['roundsQuarent'] = min(2, 2 ** self.client_quarantine_dict[client_id]['quarentena'])
 
     def decrease_quarentine(self, client_id):
         if self.client_quarantine_dict[client_id]['roundsQuarent'] ==0:
@@ -253,18 +264,37 @@ class FedAvg(Server):
         FRR = FN / (FN + TP) if (FN + TP) > 0 else 0
         return FPR, FRR
 
+    def _quick_val_accuracy(self, state_dict):
+        """Evaluate state_dict on public validation set. Returns accuracy 0-1."""
+        try:
+            public_val_dir = os.environ.get('PUBLIC_VAL_DIR', '')
+            if not public_val_dir or not os.path.isdir(public_val_dir):
+                return None
+            device = next(iter(state_dict.values())).device if state_dict else torch.device('cpu')
+            result = _eval_state_dict(state_dict, public_val_dir, device)
+            return float(result['acc'])
+        except Exception as e:
+            print(f'[ROLLBACK] val accuracy check failed: {e}')
+            return None
+
     def train(self):
-        
+        _best_val_acc = 0.0
+        _rollback_count = 0
+        _consecutive_rollbacks = 0
         for i in range(self.global_rounds+1):
+            self.current_round = i
             s_t = time.time()
             global_state_before_round = {
                 k: v.detach().clone()
                 for k, v in self.global_model.state_dict().items()
             }
-            quarantined_at_round_start = {
-                client_id for client_id, status in self.client_quarantine_dict.items()
-                if status['roundsQuarent'] > 0
-            }
+            quarantined_at_round_start = (
+                set() if getattr(self, 'disable_quarantine', False)
+                else {
+                    client_id for client_id, status in self.client_quarantine_dict.items()
+                    if status['roundsQuarent'] > 0
+                }
+            )
             self.selected_clients = self.select_clients()
             self.send_models()
             self.removed_clients = []
@@ -286,6 +316,34 @@ class FedAvg(Server):
 
             self.receive_models()
 
+            # ALIE Attack Synthesis & Verification
+            # ALIE requires inspecting honest client updates from the current round
+            clients_by_id = {c.id: c for c in self.clients}
+            alie_indices = [
+                idx for idx, cid in enumerate(self.uploaded_ids)
+                if getattr(clients_by_id.get(cid), 'pending_attack_type', 'benign') == 'malicious_alie'
+            ]
+            benign_models = [
+                self.uploaded_models[idx] for idx, cid in enumerate(self.uploaded_ids)
+                if getattr(clients_by_id.get(cid), 'pending_attack_type', 'benign') == 'benign'
+            ]
+            if alie_indices and benign_models:
+                print(f"[ALIE Attack] Crafting ALIE perturbation using {len(benign_models)} benign updates for {len(alie_indices)} ALIE client(s)...")
+                n_malicious = len(self.index_malicious) if hasattr(self, 'index_malicious') else len(alie_indices)
+                alie_model_template = model_alie(benign_models, self.num_clients, n_malicious)
+                
+                # Replace uploaded model for ALIE clients
+                for idx in alie_indices:
+                    self.uploaded_models[idx] = copy.deepcopy(alie_model_template)
+
+                # Verification check on crafted ALIE model
+                for idx in alie_indices:
+                    is_valid, stats = verify_alie_attack(benign_models, self.uploaded_models[idx], self.num_clients, n_malicious)
+                    if is_valid:
+                        print(f"[ALIE Verification PASSED] Client {self.uploaded_ids[idx]}: max_diff={stats['max_diff']:.6e}, NaN count={stats['nan_count']}")
+                    else:
+                        print(f"[ALIE Verification FAILED] Client {self.uploaded_ids[idx]}: max_diff={stats['max_diff']:.6e}, NaN count={stats['nan_count']}")
+
             # Dump state_dicts pra geracao de dataset (modo --dump_state_dicts)
             if self.dump_dir and i >= self.dump_start_round:
                 clients_by_id = {c.id: c for c in self.clients}
@@ -300,7 +358,9 @@ class FedAvg(Server):
                 print(f'[dump] round {i}: ignorado antes de dump_start_round={self.dump_start_round}')
 
             if i > 0 and self.uploaded_models:
-                if self.cc==2:
+                if self.current_round <= getattr(self, 'round_init_atk', 0):
+                    print(f"Warmup round {self.current_round} <= {getattr(self, 'round_init_atk', 0)}; skipping detector.")
+                elif self.cc==2:
                     oi = time.time()
                     round_upload_ids = list(self.ids)
                     if len(self.uploaded_models) < 2:
@@ -337,7 +397,7 @@ class FedAvg(Server):
                     self.save_cc_type_to_csv(i, detail_rows)
                     print(f"Tempo de execução: {time.time()-oi:.4f} segundos")
 
-                if self.cc==3:
+                elif self.cc==3:
                     oi = time.time()
                     round_upload_ids = list(self.ids)
                     round_removed_clients = []
@@ -384,14 +444,18 @@ class FedAvg(Server):
                     self.save_cc_type_to_csv(i, detail_rows)
                     print(f"Tempo de execução: {time.time()-oi:.4f} segundos")
 
-                if self.cc==5:
+                elif self.cc==5:
                     print("vai rolar nada")
-                if self.cc == 7:
+                elif self.cc == 7:
                     oi = time.time()
                     clients_by_id = {c.id: c for c in self.clients}
                     true_positive_uploads = 0
                     malicious_uploads = 0
                     detail_rows = []
+                    uploaded_sds = [m.state_dict() for m in self.uploaded_models]
+                    mlp_results = self.client_check.classify_batch(
+                        uploaded_sds, global_state_dict=global_state_before_round
+                    )
                     for idx in range(len(self.uploaded_models) - 1, -1, -1):
                         client_id = self.ids[idx]
                         client = clients_by_id.get(client_id)
@@ -399,10 +463,7 @@ class FedAvg(Server):
                         is_malicious_round = bool(getattr(client, 'is_malicious', False))
                         if is_malicious_round:
                             malicious_uploads += 1
-                        sd = self.uploaded_models[idx].state_dict()
-                        mlp_result = self.client_check.classify(
-                            sd, global_state_dict=global_state_before_round
-                        )
+                        mlp_result = mlp_results[idx]
                         mlp_hit = bool(mlp_result['is_malicious'])
                         removed = mlp_hit
                         reason = 'mlp' if mlp_hit else 'none'
@@ -446,15 +507,120 @@ class FedAvg(Server):
                         if s > 0:
                             self.uploaded_weights = [w / s for w in self.uploaded_weights]
                     print(f'Tempo de execução cc={self.cc}: {time.time()-oi:.4f}s')
+
+                elif self.cc == 8:
+                    oi = time.time()
+                    clients_by_id = {c.id: c for c in self.clients}
+                    true_positive_uploads = 0
+                    malicious_uploads = 0
+                    detail_rows = []
+                    
+                    # 1. Element-wise Sign Extraction
+                    sign_vectors = []
+                    for model in self.uploaded_models:
+                        sign_vec = []
+                        for k, v in model.state_dict().items():
+                            if v.is_floating_point():
+                                global_v = global_state_before_round[k].to(v.device)
+                                delta = v - global_v
+                                sign = torch.where(torch.abs(delta) > 1e-8, torch.sign(delta), torch.zeros_like(delta))
+                                sign_vec.append(sign.view(-1))
+                        sign_vectors.append(torch.cat(sign_vec))
+                    sign_vectors = torch.stack(sign_vectors) # [num_clients, total_params]
+                    
+                    # 2. Compute similarity matrix A_{i,j} = (1 + cos(S_i, S_j)) / 2
+                    norms = torch.norm(sign_vectors, dim=1, keepdim=True)
+                    normalized_signs = sign_vectors / (norms + 1e-10)
+                    sim_matrix = torch.matmul(normalized_signs, normalized_signs.T)
+                    sim_matrix = (1 + sim_matrix) / 2
+                    
+                    # 3. Determine threshold O_phi
+                    num_clients = len(self.uploaded_models)
+                    m = len(self.index_malicious) if hasattr(self, 'index_malicious') else 0
+                    if m > 1 and num_clients > 1:
+                        phi = int(m * (m - 1) / 2)
+                        sim_matrix_np = sim_matrix.cpu().numpy()
+                        off_diag_idx = np.triu_indices(num_clients, k=1)
+                        similarities = sim_matrix_np[off_diag_idx]
+                        similarities = np.sort(similarities)[::-1] # descending
+                        
+                        if phi > 0 and phi <= len(similarities):
+                            o_phi = similarities[phi - 1]
+                        else:
+                            o_phi = similarities[0] if len(similarities) > 0 else 0
+                        
+                        # 4. Calculate attack density P_i
+                        p_i = np.zeros(num_clients)
+                        for idx_i in range(num_clients):
+                            for idx_j in range(num_clients):
+                                if idx_i != idx_j and sim_matrix_np[idx_i, idx_j] > o_phi:
+                                    p_i[idx_i] += 1
+                                    
+                        p_m = np.mean(p_i)
+                        
+                        for idx in range(num_clients - 1, -1, -1):
+                            client_id = self.ids[idx]
+                            client = clients_by_id.get(client_id)
+                            attack_type = getattr(client, 'last_attack_type', 'unknown')
+                            is_malicious_round = bool(getattr(client, 'is_malicious', False))
+                            if is_malicious_round:
+                                malicious_uploads += 1
+                                
+                            fedsign_hit = bool(p_i[idx] >= p_m) and p_m > 0
+                            removed = fedsign_hit
+                            reason = 'fedsign_pad' if fedsign_hit else 'none'
+                            
+                            detail_rows.append({
+                                'round': i,
+                                'cc': self.cc,
+                                'client_id': client_id,
+                                'attack_type': attack_type,
+                                'is_malicious_round': is_malicious_round,
+                                'malicious_group': client_id in self.index_malicious,
+                                'removed': removed,
+                                'reason': reason,
+                                'mlp_hit': fedsign_hit,
+                                'mlp_score': float(p_i[idx]),
+                                'mlp_label_score': float(p_m),
+                                'mlp_binary_hit': False,
+                                'mlp_label_hit': False,
+                                'binary_threshold': float(o_phi),
+                                'label_threshold': 0.0,
+                                'decision_rule': 'fedsign',
+                            })
+                            
+                            if removed:
+                                if is_malicious_round:
+                                    true_positive_uploads += 1
+                                print(f'cc={self.cc}: removing client {client_id} (FedSIGN PAD)')
+                                self.set_client_quarantine(client_id)
+                                del self.uploaded_models[idx]
+                                del self.ids[idx]
+                                del self.uploaded_ids[idx]
+                                del self.uploaded_weights[idx]
+                    else:
+                        print("FedSIGN requires >1 clients and >1 malicious clients to set phi threshold.")
+                        
+                    self.save_cc_detail_to_csv(detail_rows)
+                    self.save_cc_type_to_csv(i, detail_rows)
+                    round_detail_rows = detail_rows
+                    round_recall = true_positive_uploads / malicious_uploads if malicious_uploads > 0 else 0.0
+                    print(
+                        f'recall de uploads maliciosos no round (cc={self.cc}): '
+                        f'{round_recall:.2%} ({true_positive_uploads}/{malicious_uploads})'
+                    )
+                    if self.uploaded_weights:
+                        s = sum(self.uploaded_weights)
+                        if s > 0:
+                            self.uploaded_weights = [w / s for w in self.uploaded_weights]
+                    print(f'Tempo de execução cc={self.cc}: {time.time()-oi:.4f}s')
             print(self.client_quarantine_dict)
             # Quarantine-occupancy snapshot (diagnostic, NOT the paper FPR/FRR).
             quarantine_fpr = 0
             quarantine_frr = 0
             if self.cc ==2:
                 quarantine_fpr, quarantine_frr = self.compute_fpr_frr_cluster(self.removed_clients, self.cluster_tuples)
-            if self.cc ==3:
-                quarantine_fpr, quarantine_frr = self.compute_fpr_frr()
-            if self.cc ==7:
+            if self.cc in (3, 7, 8):
                 quarantine_fpr, quarantine_frr = self.compute_fpr_frr()
             # Per-round detection rate (paper Eq 14/15, headline metric).
             detection_fpr, detection_frr = self.compute_upload_fpr_frr(round_detail_rows)
@@ -467,6 +633,38 @@ class FedAvg(Server):
             if self.dlg_eval and i%self.dlg_gap == 0:
                 self.call_dlg(i)
             self.aggregate_parameters()
+
+            # ---- Rollback safety net (cc=7 only) ----
+            if self.cc == 7 and i > 0:
+                new_acc = self._quick_val_accuracy(
+                    self.global_model.state_dict()
+                )
+                if new_acc is not None:
+                    if new_acc > _best_val_acc:
+                        _best_val_acc = new_acc
+                        _consecutive_rollbacks = 0
+                    drop = _best_val_acc - new_acc
+                    if drop > _ROLLBACK_DROP_PP and _consecutive_rollbacks < 3:
+                        print(
+                            f'[ROLLBACK] Round {i}: val accuracy {new_acc:.4f} '
+                            f'dropped {drop:.4f} from best {_best_val_acc:.4f}. '
+                            f'Restoring pre-round global model (consecutive={_consecutive_rollbacks+1}).'
+                        )
+                        self.global_model.load_state_dict(global_state_before_round)
+                        _rollback_count += 1
+                        _consecutive_rollbacks += 1
+                    else:
+                        if drop > _ROLLBACK_DROP_PP:
+                            print(
+                                f'[ROLLBACK OVERRIDE] Round {i}: max consecutive rollbacks reached ({_consecutive_rollbacks}). '
+                                f'Updating best val acc to {new_acc:.4f} and continuing.'
+                            )
+                            _best_val_acc = new_acc
+                        _consecutive_rollbacks = 0
+                        print(
+                            f'[VAL] Round {i}: val accuracy {new_acc:.4f} '
+                            f'(best={_best_val_acc:.4f}, drop={drop:.4f})'
+                        )
 
             self.Budget.append(time.time() - s_t)
             print('-'*25, 'time cost', '-'*25, self.Budget[-1])

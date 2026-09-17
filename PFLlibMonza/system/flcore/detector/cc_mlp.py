@@ -132,18 +132,21 @@ class ClientCheckMLP:
                 f"mas o runtime esta usando {expected_dataset!r}. "
                 "Use um detector treinado para o mesmo dataset."
             )
-        combined = report.get('combined_label_fpr05')
+        combined = report.get(threshold_key)
         if threshold_value is not None:
             self.threshold = float(threshold_value)
             self.threshold_key = 'manual'
             self.decision_rule = 'manual_binary'
-        elif threshold_key == 'combined_label_fpr05' and combined and 'binary_threshold' in combined and 'label_threshold' in combined:
+        elif combined and isinstance(combined, dict) and 'binary_threshold' in combined and 'label_threshold' in combined:
             self.threshold = float(combined['binary_threshold'])
             self.label_threshold = float(combined['label_threshold'])
-            self.threshold_key = 'combined_label_fpr05'
+            self.threshold_key = threshold_key
             self.decision_rule = 'binary_or_label'
         elif threshold_key not in report or 'threshold' not in report[threshold_key]:
-            available = [k for k, v in report.items() if isinstance(v, dict) and 'threshold' in v]
+            available = [
+                k for k, v in report.items() 
+                if isinstance(v, dict) and ('threshold' in v or ('binary_threshold' in v and 'label_threshold' in v))
+            ]
             raise KeyError(
                 f"Threshold '{threshold_key}' ausente em {report_path}. "
                 f"Disponiveis: {available}"
@@ -174,7 +177,17 @@ class ClientCheckMLP:
         logit_ben = float(logits[0].item())
         logit_mal = float(logits[1].item())
         score = logit_mal - logit_ben
-        binary_hit = score > self.threshold
+
+        # Hybrid zero-vector pre-filter (instantly catches malicious_zeros attack)
+        is_zero_attack = False
+        try:
+            total_norm = sum(float(torch.linalg.norm(v.float()).item()) for v in state_dict.values() if v.is_floating_point())
+            if total_norm < 1e-4:
+                is_zero_attack = True
+        except Exception:
+            pass
+
+        binary_hit = bool(score > self.threshold or is_zero_attack)
         label_hit = bool(self.label_threshold is not None and label_score > self.label_threshold)
         is_mal = bool(binary_hit or label_hit)
         return {
@@ -191,8 +204,59 @@ class ClientCheckMLP:
             'threshold_key': self.threshold_key,
             'binary_hit': bool(binary_hit),
             'label_hit': bool(label_hit),
+            'is_zero_attack': is_zero_attack,
             'decision_rule': self.decision_rule,
         }
+
+    @torch.no_grad()
+    def classify_batch(
+        self,
+        state_dicts: Sequence[Mapping[str, torch.Tensor]],
+        global_state_dict: Mapping[str, torch.Tensor] | None = None,
+    ) -> List[Dict]:
+        raw_results = [
+            self.classify(sd, global_state_dict=global_state_dict)
+            for sd in state_dicts
+        ]
+        if len(raw_results) <= 2:
+            return raw_results
+
+        scores = np.array([r['score'] for r in raw_results], dtype=np.float32)
+        l_scores = np.array([r['label_score'] for r in raw_results], dtype=np.float32)
+
+        # Bottom 70% estimation for binary scores (MAD multiplier 2.0)
+        b_sorted = np.sort(scores)
+        n_b = max(2, int(len(b_sorted) * 0.7))
+        b_ben = b_sorted[:n_b]
+        b_med = float(np.median(b_ben))
+        b_mad = float(np.median(np.abs(b_ben - b_med)))
+        b_raw_cutoff = b_med + 2.0 * 1.4826 * b_mad if b_mad > 0.05 else self.threshold
+        # Cap b_cutoff to prevent extreme threshold explosion under un-quarantined poison drift
+        b_cutoff = min(max(self.threshold, b_raw_cutoff), max(self.threshold + 15.0, b_med + 20.0))
+
+        l_sorted = np.sort(l_scores)
+        n_l = max(2, int(len(l_sorted) * 0.7))
+        l_ben = l_sorted[:n_l]
+        l_med = float(np.median(l_ben))
+        l_mad = float(np.median(np.abs(l_ben - l_med)))
+        l_cutoff = l_med + 1.8 * 1.4826 * l_mad if l_mad > 0.01 else (self.label_threshold if self.label_threshold is not None else 0.0)
+
+        results = []
+        for r in raw_results:
+            res = dict(r)
+            binary_hit = bool(res['score'] > b_cutoff or res.get('is_zero_attack', False))
+            label_hit = bool(res['label_score'] > l_cutoff)
+            is_mal = bool(binary_hit or label_hit)
+
+            res['is_malicious'] = is_mal
+            res['label'] = int(is_mal)
+            res['binary_hit'] = binary_hit
+            res['label_hit'] = label_hit
+            res['agg_weight'] = 0.0 if is_mal else 1.0
+            res['binary_threshold'] = b_cutoff
+            res['label_threshold'] = l_cutoff
+            results.append(res)
+        return results
 
     def is_malicious(
         self,
