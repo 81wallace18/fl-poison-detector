@@ -43,7 +43,11 @@ case "$MODE" in
     ;;
 esac
 
-VENV_PY="${VENV_PY:-$ROOT/.venv/bin/python}"
+if [[ -x "$ROOT/.venv/bin/python" ]]; then
+  VENV_PY="${VENV_PY:-$ROOT/.venv/bin/python}"
+else
+  VENV_PY="${VENV_PY:-$(which python3)}"
+fi
 JUPYTER="${JUPYTER:-$ROOT/.venv/bin/jupyter}"
 SYSTEM_DIR="$ROOT/PFLlibMonza/system"
 DATASET_DIR="$ROOT/PFLlibMonza/dataset"
