@@ -167,9 +167,16 @@ PY
   "$VENV_PY" "$ROOT/scripts/create_label_flip_train_mal.py" \
     --dataset-dir "$DATASET_DIR/$DATASET_NAME" --num-classes 10
 
-  monza_log "Dump MONZA state_dicts"
+  monza_log "Generate Poisoned Trajectory for MLP"
   monza_run 5 "$NUM_MALICIOUS" "$DUMP_GLOBAL_ROUNDS" "$DUMP_TIMES" \
-    --dump_state_dicts "$STATE_DICTS_DIR" --dump_start_round "$DUMP_START_ROUND"
+    --dump_state_dicts "$STATE_DICTS_DIR" \
+    --dump_start_round "$DUMP_START_ROUND"
+
+  monza_log "Generate Clean Trajectory for MLP"
+  monza_run 5 0 "$DUMP_GLOBAL_ROUNDS" "$DUMP_TIMES" \
+    --dump_state_dicts "$STATE_DICTS_DIR" \
+    --dump_start_round "$DUMP_START_ROUND"
+
   find "$STATE_DICTS_DIR" -name '*.json' | wc -l
   du -sh "$STATE_DICTS_DIR"
 
