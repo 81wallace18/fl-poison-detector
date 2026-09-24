@@ -176,7 +176,6 @@ PY
   monza_run 5 0 "$DUMP_GLOBAL_ROUNDS" "$DUMP_TIMES" \
     --dump_state_dicts "$STATE_DICTS_DIR" \
     --dump_start_round "$DUMP_START_ROUND"
-
   find "$STATE_DICTS_DIR" -name '*.json' | wc -l
   du -sh "$STATE_DICTS_DIR"
 
@@ -196,8 +195,7 @@ PY
   monza_log "Run CC=3 (Cosine Defense - With Quarantine)"
   monza_run 3 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"
 
-  monza_log "Run CC=3 (Cosine Defense - Without Quarantine)"
-  monza_run 3 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" --disable_quarantine
+
 
   local mlp_args=(--detector_dir "$MLP_DIR" --mlp_threshold_key "$MLP_THRESHOLD_KEY")
   [[ -z "$MLP_THRESHOLD_VALUE" ]] || mlp_args+=(--mlp_threshold_value "$MLP_THRESHOLD_VALUE")
@@ -205,26 +203,24 @@ PY
   monza_log "Run CC=7 (MLP Defense - With Quarantine)"
   monza_run 7 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${mlp_args[@]}"
 
-  monza_log "Run CC=7 (MLP Defense - Without Quarantine)"
-  monza_run 7 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" "${mlp_args[@]}" --disable_quarantine
+
 
   monza_log "Run CC=2 (zPROBE Defense - With Quarantine)"
   monza_run 2 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"
 
-  monza_log "Run CC=2 (zPROBE Defense - Without Quarantine)"
-  monza_run 2 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" --disable_quarantine
+
 
   monza_log "Run CC=8 (FedSIGN Defense - With Quarantine)"
   monza_run 8 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES"
 
-  monza_log "Run CC=8 (FedSIGN Defense - Without Quarantine)"
-  monza_run 8 "$NUM_MALICIOUS" "$GLOBAL_ROUNDS" "$TIMES" --disable_quarantine
 
-  monza_log "Archive system CSVs to ANALYSIS_OUT"
+
+  monza_log "Archive system CSVs and H5 files to ANALYSIS_OUT"
   mkdir -p "$ANALYSIS_OUT"
   cp "$SYSTEM_DIR"/fpr_frr_results_*.csv "$ANALYSIS_OUT"/ 2>/dev/null || true
   cp "$SYSTEM_DIR"/cc_detail_results_*.csv "$ANALYSIS_OUT"/ 2>/dev/null || true
   cp "$SYSTEM_DIR"/cc_type_results_*.csv "$ANALYSIS_OUT"/ 2>/dev/null || true
+  cp "$RESULTS_DIR"/"${DATASET_NAME}"_FedAvg_*.h5 "$ANALYSIS_OUT"/ 2>/dev/null || true
 
   monza_log "Execute notebook plots"
   REPO_ROOT="$ROOT" ANALYSIS_OUT="$ANALYSIS_OUT" DATASET_NAME="$DATASET_NAME" \
@@ -235,7 +231,7 @@ PY
 
   monza_log "Write CLI summaries & PNG plots"
   "$VENV_PY" "$ROOT/scripts/plot_cc_attack_types.py" \
-    --system-dir "$SYSTEM_DIR" --out-dir "$ANALYSIS_OUT" \
+    --system-dir "$SYSTEM_DIR" --results-dir "$RESULTS_DIR" --out-dir "$ANALYSIS_OUT" \
     --dataset "$DATASET_NAME" --tail-rounds 30 \
     --num-malicious "$NUM_MALICIOUS" || true
   monza_log "DONE $DATASET_NAME"
